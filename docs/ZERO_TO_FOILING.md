@@ -16,11 +16,11 @@ Steps are tagged **[DESK]** · **[BENCH]** · **[WEB PORTAL]** · **[WATER]**. A
 ## THE SAFETY MODEL — read first, it never changes
 
 1. **The buggy moves only while you physically hold the throttle trigger.** No throttle input = no motor, ever.
-2. **Follow-Me and Return-to-Me can only *steer* and only *subtract* throttle — never add it.** There is no loiter, no station-keeping, no self-driving.
+2. **Follow-Me, including FM_RETURN, can only *steer* and only *subtract* throttle — never add it.** There is no loiter, no station-keeping, no self-driving.
 3. **Releasing the trigger stops the buggy instantly, at the hardware level, in every mode.**
 4. **Manual control always works**, even if GPS / compass / radio fail.
 5. **GPS distance is an ASSIST, not the authority.** At close range GPS can read ~15 m off. Trust your eyes (line-of-sight), not the number. This is why the follow distance ships deliberately generous.
-6. **FM and RTM are mutually exclusive** — arming one disarms the other.
+6. **FM_RETURN is part of Follow-Me** — there is no separate RTM mode or arm gesture.
 
 > The single most dangerous mistake is a **wrong steering sign**: it makes Follow-Me steer the buggy *toward* you instead of trailing you (closed-loop runaway). The wheels-up steering check in the BENCH phase is the top pre-water gate — do not skip it.
 
@@ -329,16 +329,16 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | Setting | Safe starting value | Why |
 |---|---|---|
 | `steering_inverted` | as verified in 2.6 | Wrong sign = runaway |
-| `rtm_stop_distance_m` | **10 m** (do NOT go below 10) | RTM hard-stop radius; below ~10 m is inside GPS error |
-| `min_dist_m` | **10 m** (leave generous) | FM hard-stop distance; keeps FM from engaging on the tow rope |
+| `min_dist_m` | **10 m** (leave generous) | ACTIVE FM hard stop; cap 0 latches until trigger release |
 | `followme_smoothing_band_m` | **10 m** | Decel band above the hard stop (follow distance = min_dist_m + band) |
 | `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | FM speed ceiling |
-| `foiler_low_speed_kmh` | **8 km/h** | Below this rider speed FM holds (won't chase a swimmer) |
 | `followme_mode` | **2 = Behind** (shipped default) | Pick the geometry and confirm it on the display — F1/F2/F3/F4 |
 | GPS anti-spoof (Phase A/B) | leave defaults: HDOP 2.0, accel 3.0 G, teleport 80 km/h, suspect 3, pair-dist 500 m, speed-diff 50 km/h | Tuned for this craft; only widen with reason |
 | `gps_dyn_model` | **0 (Sea)** — unless your water is above ~500 m altitude, then **4 (Automotive)** | The Sea navigation model has a 500 m ceiling and good fixes start being rejected above it. Sea is the better model below that, so leave it at 0 |
-| `rtm_compass_required` | 1 | Don't arm RTM without a good compass |
+| `rtm_compass_required` | 1 | Require a valid heading source for FM_RETURN (historical key name) |
 | `rtm_use_compass` | 1 (Hybrid) — never 2 on water | Mode 2 (compass-only) is bench-diagnostic only (motor EMI biases compass 100°+) |
+| `rtm_target_speed_kmh` | 5 km/h or lower | FM_RETURN target; 0 also means 5 km/h and firmware hard-limits it to 8 km/h |
+| `rtm_approach_zone_m` | 12 m | FM_RETURN slowdown-band width outside effective `fm_engage_dist_m` |
 
 > **Follow-Me mode mapping.** The same on every surface — firmware, both on-device portals, and the
 > standalone config tool:
@@ -348,22 +348,23 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 > | **1** | **Near Right** | behind and to your right |
 > | **2** | **Behind** | directly behind you — **shipped default** |
 > | **3** | **Near Left** | behind and to your left |
-> | **4** | **In Front** | forward pacer — experimental; buggy must already be ahead |
+> | **4** | **In Front** | forward pacer — experimental; radial activation like F1–F3 |
 >
 > F4 accepts `boogie_vmax_in_followme_kmh=0`; this removes the absolute vehicle-speed ceiling but
 > keeps the rider-relative front-gap governor active. Start with a finite, low ceiling for controlled
-> validation whenever possible. F4 never performs an autonomous overtake.
+> validation whenever possible. F4 may autonomously travel from behind toward its forward target;
+> front-cone/lead limits now produce warnings only.
 >
-> `0` disables FM steering entirely (RTM throttle-limit only). Set the side you want, then confirm it
-> on the TX display: **F1 / F2 / F3**.
+> `0` disables Follow-Me. Set the geometry you want, then confirm it on the TX display:
+> **F1 / F2 / F3 / F4**.
 >
 
 ### Tweak-later-OK *(safe to adjust after first sessions)* — [WEB-PORTAL, tweak-later-OK]
 - **Units:** TX `speed_src` (lead with **mph**: value 5 = TX GPS mph, 4 = RX GPS mph) and `dist_unit` (0 = m/km, 1 = ft/mi). A common convention: **distances in metres, speeds in mph.**
-- **Display:** `fm_display_mode` (1=TX speed … 2=distance to buggy), `rtm_display_mode`.
+- **Display:** `fm_display_mode` (1=TX speed … 2=distance to buggy).
 - **Feel:** `rtm_steer_response` preset, `motor_ramp_s` (0.75 s default; smooths throttle + steering), `near_diag_offset_deg` (offset off straight-behind).
 - **Timers:** `fm_arm_window_s` (180 s — keep generous so the arm survives float→takeoff→tow→whip), `sleep_timeout_s`.
-- **Magnet (only if the Hall sensor is fitted):** TX `mag_mode` (0=off, 1=FM, 2=RTM, 3=FM@2s/RTM@5s).
+- **Magnet (only if the Hall sensor is fitted):** TX `mag_mode` (0=off, 1=FM). Stored legacy values 2/3 are treated as FM-enabled.
 
 > `near_diag_offset_deg` ships at **45°**, which puts **Near Right at 135°** and **Near Left at 225°**
 > relative to your heading. Raise it to tuck the buggy further behind you; lower it to bring it wider.
@@ -379,7 +380,7 @@ chop, one-handed, with a foil under you. Learn them dry first.
 >
 > **Indoors you will almost certainly get a fault, and that is the system working correctly.**
 >
-> FM and RTM both require a **trustworthy GPS fix on both units**. Through a roof you will not get
+> FM, including FM_RETURN, requires a **trustworthy GPS fix on both units**. Through a roof you will not get
 > one, so the moment you arm, the gate fails and the buggy **STOPS** — `St` on the display plus a
 > long buzz — and you have to re-arm. Nothing is broken. **That is the fault that stops a runaway**,
 > and seeing it once, on the bench, is genuinely worth doing: it teaches you what the failure looks
@@ -389,17 +390,17 @@ chop, one-handed, with a foil under you. Learn them dry first.
 >
 > 1. Wait for **both** GPS dots to go **solid** — TX and RX. Solid means a fix good enough to steer
 >    on (see below); blinking means it is still acquiring.
-> 2. Arm FM. **Standing right next to the buggy, it will not engage** — you are inside the minimum
->    distance. It **HOLDS**: still armed, waiting, ready to resume. That is the proximity gate, and
->    it is deliberate.
+> 2. Arm FM. **Standing right next to the buggy, it will not engage** — radial distance has not yet
+>    exceeded `D_engage` for 2 seconds. It stays `FM_ARMED` with manual control available.
 > 3. Walk away from the buggy and watch the **distance readout on the remote climb** — that is your
 >    end-to-end proof that both GPS units and the telemetry link are healthy and talking.
 >
-> **Hold vs fault — know the difference, they look different on purpose:**
+> **Warning / min stop / fault — know the difference:**
 >
 > | | What triggers it | What the buggy does |
 > |---|---|---|
-> | **HOLD** | too close · you slowed down · you fell | Pauses, **stays armed**, resumes on its own |
+> | **Warning** | radial/front geometry outside its diagnostic limits | Medium pulse every 3 s; control unchanged |
+> | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0 until trigger release; then manual, fresh `>D_engage` proof required |
 > | **FAULT** | GPS / compass / radio dropout | **Stops**, shows `St` + long buzz, **you must re-arm** |
 >
 > **When does the GPS dot go solid?** Not on satellite count — on **fix quality**. The TX requires a
@@ -413,8 +414,8 @@ Confirm the gestures and display before you're in the water:
 
 - **Arm FM (toggle, works while floating):** **LEFT tap → RIGHT hold ~3 s.** Display shows **F1/F2/F3/F4**, remote buzzes **two quick taps** = armed. Repeat the gesture to cycle **F1→F2→F3→F4→F0-off** before you're on the throttle.
 - **Arm FM (magnet, works during the tow — if fitted):** hold magnet ~2 s, feel one pulse, pull away → two taps = armed (toggle: same gesture disarms).
-- **Arm RTM:** **RIGHT tap → LEFT hold ~5 s** (needs `gps_en=1` + `rtm_enabled=1`).
-- **Reading the FM bar:** no bar = disarmed · **sweeping** = armed & ready · **blinking in place** = armed but still getting GPS/link · **steady distance bar** = following · **`St`** = stopped.
+- **Former RTM gesture:** RIGHT tap → LEFT hold has no autonomous action. Return now starts automatically inside an armed FM session.
+- **Reading the FM bar:** no bar = disarmed · **sweeping** = armed & ready · **blinking in place** = armed but not ready · **steady distance bar** = following · **`rE` + full blinking bar** = returning · **`Id`** = legacy-RX completion only · **`St`** = stopped.
 - **Logging (AUX):** logging is **OFF at boot by design** — that is not a fault.
 
   > **Leave `logger_en` at 0.** With it at 0 the RX boots with logging off, so it never fills SPIFFS
@@ -422,7 +423,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Holds vs Stops:** trigger release or a fall / slow-down / too-close is a **HOLD** — buggy pauses, stays armed and resumes when the gates recover. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss is warning-only and repeats every 3 seconds, even with the trigger released. Reaching `min_dist_m` latches cap 0 until release; that release restores manual cap 255 and clears the separation proof, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---
@@ -432,15 +433,15 @@ Confirm the gestures and display before you're in the water:
 Preconditions to *engage* (you can arm before these are perfect; it won't engage until they're met): paired, **GPS fix on both** units, healthy radio + telemetry, calibrated compass.
 
 1. **Float & arm** (toggle: LEFT tap → RIGHT hold; or magnet mid-tow). Two taps = armed. The arm survives up to `fm_arm_window_s` (180 s) with no throttle.
-2. **Whip / separate**, throttle held. FM **engages only when the geometry proves you've separated** — beyond the engage distance for **2 continuous seconds**, confirmed by both GPS units. No button, no timer.
+2. **Whip / separate**, throttle held. Every F1–F4 mode **engages on radial separation only** — beyond `D_engage` for **2 continuous seconds**, confirmed by both GPS units. Side/front angles are not gates.
    - Two ways to separate: whip yourself past the buggy, or keep throttle and steer the buggy to its offset side so it peels off while you carry into the wave.
 3. **Following:** the buggy trails at your set side/distance, steering itself. You keep the throttle held; the buggy only ever moves on **your** throttle and only *subtracts* from it.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
-4. **Fall / slow / too close →** it HOLDs (stays armed). **Let go of the trigger →** instant stop without disarming FM. If fresh positions then show you inside the effective engagement distance and below 2 km/h for 2 seconds, the separation proof is cleared and must be proven again. **Fault →** `St`, re-arm to continue.
-5. **Disarm:** repeat the arm gesture (toggle), or hold the magnet ~2 s (long buzz = off); arming RTM also disarms FM.
+4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F4 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
+5. **Geometry/front invalid →** warning every 3 s only; control continues unchanged. **At `min_dist_m` →** cap 0 remains latched until you release the trigger; release restores manual throttle and demands a fresh radial `>D_engage` proof before automatic FM resumes. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
-> Before starting a new tow, explicitly disarm FM or select F0. The stationary-near rule normally
-> clears the previous proof automatically, but explicit disarm is the deterministic session boundary.
+> Before starting a new tow, explicitly disarm FM or select F0. A min-distance stop release clears
+> its proof, but explicit disarm remains the deterministic session boundary.
 
 ---
 

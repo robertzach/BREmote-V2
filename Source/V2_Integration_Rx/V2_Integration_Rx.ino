@@ -13,8 +13,8 @@ Adafruit_AW9523 aw;
 Ticker ticksrc;
 TinyGPSPlus gps;
 
-// V2.5-Evo - 2026-04-25 - P7: RTM state machine and compass heading function
-void runRtmLoop();
+// Follow-Me navigation telemetry service and compass heading function
+void runFmNavigationLoop();
 float getCompassHeading();
 // V2.5-Evo - 2026-07-19 - P3 FM: Follow-Me state machine (RTMState.ino)
 void runFmLoop();
@@ -80,16 +80,12 @@ void loop()
   // Runtime button detection: BIND = compass cal. Boot-time pairing is guarded inside.
   checkButtons();
 
-  // V2.5-Evo - 2026-04-25 - P7: RTM state machine — safety gates, steering override, Phase C.
-  // Runs at 10Hz regardless of the 1000ms GPS/VESC gate below.
-  runRtmLoop();
+  // Shared heading snapshot, FM telemetry and TX/RX distance. Runs at 10 Hz.
+  runFmNavigationLoop();
 
   // V2.5-Evo - 2026-07-19 - P3 FM: Follow-Me state machine — activation conditions, trailing
   // target-point steering, throttle cap chain. Also rate-limits itself to 10Hz internally.
-  // MUST run after runRtmLoop(): RTM and FM are mutually exclusive and runFmLoop() reads
-  // rtm_rx_active to decide whether RTM already owns the buggy this tick. FM keeps its own
-  // throttle cap (fm_throttle_cap) rather than sharing rtm_approach_cap, so RTM's per-tick
-  // "inactive -> cap 255" housekeeping can never transiently clear an FM cap in between.
+  // MUST run after runFmNavigationLoop(): FM consumes the shared heading snapshot and telemetry.
   runFmLoop();
 
   // GPS runs on its own configurable-rate timer, independent of the 1000ms VESC/wetness gate.

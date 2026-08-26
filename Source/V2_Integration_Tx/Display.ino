@@ -679,8 +679,18 @@ void renderOperationalDisplay()
   // V2.5-Evo - 2026-04-28 - ChgDZ: Persistent "FM" while Follow-Me armed, RTM not active.
   // displayDigitZone() preserves R5 proximity bar, R6 battery bar, C7 GPS dot, C8/C9 bargraphs.
   // Previous hand-written render wrote through all 7 rows, destructively clearing R5/R6.
-  if (fm_armed && !rtm_tx_active)
+  if (fm_armed)
   {
+    if (telemetry.fm_flags & FM_FLAG_RETURN)
+    {
+      // Persistent return status. Trigger release may pause the motor while this remains visible;
+      // FM_FLAG_ENGAGED separately reports whether automatic steering is live on this tick.
+      displayDigits(LET_R, LET_E);
+      updateR5ProximityBar();
+      updateDisplay();
+      xSemaphoreGive(displayMutex);
+      return;
+    }
     // V2.5-Evo - 2026-05-01 - FM digit zone: show data selected by fm_display_mode instead of static "FM" text.
     // R5 center-expanding bar already signals FM active — digit zone shows useful data instead.
     // Option 1: TX GPS speed in the unit selected by speed_src (0xFF = no fix → shows "--").
@@ -1347,78 +1357,14 @@ static void displayDistanceInUnits(float dist_m)
   }
 }
 
-// ============================================================
-// V2.5-Evo - 2026-04-27 - P8: RTM/FM ACTIVE INFO DISPLAY
-// Called from loop() instead of renderOperationalDisplay() when rtm_tx_active==true.
-// Modes: 0=distance to TX (default), 1=speed, 2=alternating 2.5s each.
-// Distance telemetry encoding (rtm_distance byte from RX):
-//   0-99  → tenths of meter (0.0–9.9 m), displayed as "X.X" with C3 decimal dot
-//   100-254 → whole meters (value-90 = actual m; 100=10m, 199=109m, 254=164m max)
-//   255   → N/A / RTM inactive on RX side → show "--"
-// ============================================================
-void renderRtmInfoDisplay()
-{
-  xSemaphoreTake(displayMutex, portMAX_DELAY);  // loop-task render — waits for the bargraph task to release
-  static unsigned long alt_last_switch_ms = 0;
-  static uint8_t       alt_showing        = 0;  // 0=distance, 1=speed (used in mode 2)
-
-  uint8_t mode = usrConf.rtm_display_mode;
-
-  if (mode == 2)
-  {
-    if (alt_last_switch_ms == 0)
-      alt_last_switch_ms = millis();  // start timer on first call; show distance first
-    else if (millis() - alt_last_switch_ms >= 2500UL)
-    {
-      alt_showing        = alt_showing ? 0 : 1;
-      alt_last_switch_ms = millis();
-    }
-    mode = alt_showing;
-  }
-
-  if (mode == 0)
-  {
-    // Distance mode — decode telemetry.rtm_distance then convert to selected unit
-    uint8_t d = telemetry.rtm_distance;
-    if (d == 0xFF)
-    {
-      displayDigits(DASH, DASH);
-    }
-    else
-    {
-      float actual_m;
-      if (d < 100)
-        actual_m = d / 10.0f;
-      else
-        actual_m = (float)(d - 90);
-
-      displayDistanceInUnits(actual_m);
-    }
-  }
-  else
-  {
-    // Speed mode (mode == 1 or speed half of mode 2)
-    if (usrConf.speed_src == 2 || usrConf.speed_src == 3 || usrConf.speed_src == 5)
-      displayShowTwoDigitOrDash(tx_gps_speed);
-    else
-      displayShowTwoDigitOrDash(telemetry.foil_speed);
-  }
-
-  updateR5ProximityBar();
-  updateDisplay();
-  xSemaphoreGive(displayMutex);
-}
 
 // ============================================================
 // V2.5-Evo - 2026-04-28 - P9 S4: R5 PROXIMITY BAR
 // V2.5-Evo - 2026-07-20 - Batch T (Fable FM v1.4): FM path is now STATE-DRIVEN from
 //   telemetry.fm_flags + TX-local state. Suppressed during showFullScreenMessage() (buffer
 //   cleared, not called during blocking messages). All R5 writes stay inside displayBuffer[6]
-//   under the caller's displayMutex (renderOperationalDisplay / renderRtmInfoDisplay hold it),
+//   under the caller's displayMutex (renderOperationalDisplay holds it),
 //   so no tearing; no blocking, no delays — pure presentation.
-//
-// RTM (unchanged): blinks 1000/500; square-root curve, GROW-WITH-FAR (full = at arm distance,
-//   shrinks from the right as the buggy closes). rtm_arm_dist_m is the 100% reference.
 //
 // FM R5 states:
 //   Disarmed (!fm_armed)                 → R5 fully OFF (absence = "not armed").
@@ -1426,8 +1372,9 @@ void renderRtmInfoDisplay()
 //                                           per ~200ms (matches the bargraph tick cadence).
 //   ARMED-NOT-READY (armed, !engaged,    → same 3-px segment BLINKS IN PLACE (centered), no sweep
 //     any not-ready per fmArmedNotReady())  — "armed, waiting on GPS/link"; flips to sweep live.
-//   ENGAGED (fm_flags bit1, link fresh)  → static distance bar, GROW-WITH-FAR (same direction as
-//                                           RTM for consistency), center-expanding, SPIFFS-scaled
+//   RETURN (fm_flags bit4, link fresh)   → blinking full-width bar.
+//   ENGAGED (fm_flags bit1, link fresh)  → static distance bar, GROW-WITH-FAR, center-expanding,
+//                                           SPIFFS-scaled
 //                                           full-scale from usrConf.fm_warn_distance_m (existing
 //                                           field — no new confStruct field).
 // ============================================================
@@ -1440,7 +1387,7 @@ void updateR5ProximityBar()
   static int8_t        r5_scan_pos = 0;   // left column of the 3-px segment; bounds 0..COLS-3
   static int8_t        r5_scan_dir = 1;   // +1 sweeping right, -1 sweeping left
 
-  // Blink: 1000 ms on, 500 ms off — used by the RTM bar and the FM armed-not-ready blink-in-place.
+  // Blink: 1000 ms on, 500 ms off — used by FM_RETURN and the armed-not-ready blink-in-place.
   unsigned long now = millis();
   if (r5_blink_state)
   {
@@ -1453,37 +1400,18 @@ void updateR5ProximityBar()
 
   displayBuffer[6] = 0x0000;  // clear R5 before every call
 
-  // ---- RTM proximity bar (unchanged): blinks, GROW-WITH-FAR (full = far) ----
-  if (rtm_tx_active)
-  {
-    if (!r5_blink_state) return;  // off phase — leave R5 dark
-
-    uint8_t d = telemetry.rtm_distance;
-    if (d == 0xFF) return;  // no distance data — leave R5 dark
-
-    float current_m = (d < 100) ? d / 10.0f : (float)(d - 90);
-
-    // rtm_arm_dist_m is captured at arm-engage time but RX telemetry may still be 0xFF
-    // at that instant (RX hasn't transitioned to active yet). Lazily capture it from the
-    // first valid render call — buggy is still near arm distance at this point.
-    if (rtm_arm_dist_m <= 0.0f) rtm_arm_dist_m = current_m;
-    if (rtm_arm_dist_m <= 0.0f) return;  // buggy literally at 0 m at arm — skip to avoid divide-by-zero
-
-    float ratio = current_m / rtm_arm_dist_m;
-    if (ratio > 1.0f) ratio = 1.0f;
-    uint8_t pixels = (uint8_t)(sqrtf(ratio) * 10.0f + 0.5f);  // full at arm distance, shrinks as it closes
-    if (pixels > 10) pixels = 10;
-
-    for (uint8_t c = 0; c < pixels; c++)
-      displayBuffer[6] |= (1u << c);
-    return;
-  }
-
   // ---- FM R5 row (Batch T): state-driven from fm_flags + TX-local readiness ----
   if (!fm_armed) return;  // Disarmed → R5 fully OFF
 
   uint8_t f = telemetry.fm_flags;
   bool link_recent = (last_packet != 0 && (now - last_packet) < FM_LINK_HEALTHY_MS);
+
+  // FM_RETURN → unmistakable blinking full row. The digit zone simultaneously shows "rE".
+  if (link_recent && (f & FM_FLAG_RETURN))
+  {
+    if (r5_blink_state) displayBuffer[6] = 0x03FF;
+    return;
+  }
 
   // ENGAGED → static distance bar, GROW-WITH-FAR, SPIFFS-scaled, center-expanding.
   // Reuses the RX→TX distance byte (telemetry.rtm_distance). Full-scale = fm_warn_distance_m so

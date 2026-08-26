@@ -287,13 +287,16 @@ struct confStruct {
     uint16_t gps_chip_type;      // 0=BN-220 (default, 9600→115200, 5Hz), 2=M10 (115200, 10Hz, all constellations); TX valid: 0 and 2 only
 
     // ============================================================
-    // V2.5-Evo - 2026-04-25 - PRIORITY 7: RTM AND FM MODE PARAMETERS
+    // V2.5-Evo - 2026-04-25 - PRIORITY 7: HISTORICAL RTM ABI SLOTS + FM PARAMETERS
     //
     // 12 new uint16_t fields — sizeof grows 96→120.
     // First flash of P7 firmware resets all TX settings to defaults.
     // After flashing: re-pair TX/RX, re-enter all settings via web UI.
     // ============================================================
-    uint16_t rtm_enabled;              // RTM master enable; 0=off, 1=on; default 1
+    // The rtm_* members below are retained only to preserve the 136-byte SPIFFS layout. The
+    // standalone RTM mode was removed when FM_RETURN became the single return controller.
+    // They are not exposed by ConfigService or the web UI and are not read at runtime.
+    uint16_t rtm_enabled;              // retired ABI slot
     uint16_t rtm_hold_duration_s;      // LEFT hold time to arm RTM; 3-10 s (floor lowered 4→3 2026-07-20); default 5
     uint16_t rtm_arm_window_s;         // Window to engage throttle after arming; 5-30 s; default 10
     uint16_t rtm_double_squeeze_en;    // RTM arm gesture; 1=double squeeze, 0=single squeeze held ~500 ms; default 1
@@ -312,9 +315,9 @@ struct confStruct {
     // 3 new uint16_t fields — sizeof grows 120→124 (118 data + 6 = 124; 124 % 4 == 0, no tail padding).
     // First flash of P8 firmware resets all TX settings to defaults.
     // ============================================================
-    uint16_t rtm_display_mode;         // RTM/FM active info display: 0=distance(default), 1=speed, 2=alternating 2.5s each
+    uint16_t rtm_display_mode;         // retired ABI slot
     uint16_t fm_warn_distance_m;       // TX-RX distance to trigger FM proximity warning vibration; 50-1000m; default 150
-    uint16_t rtm_steer_exit_on_input;  // 1=any steering input exits RTM (default); 0=blend/steering correction only
+    uint16_t rtm_steer_exit_on_input;  // retired ABI slot
 
     // ============================================================
     // V2.5-Evo - 2026-04-27 - PRIORITY 8.1: FM UX REDESIGN
@@ -350,17 +353,14 @@ struct confStruct {
     // ============================================================
     // V2.5-Evo - 2026-07-20 - MagGesture: SW_VERSION 26 → 27, sizeof(confStruct) 132 → 136.
     // ============================================================
-    // Magnet/Hall gesture role. Selects what the magnet gesture arms when a magnet is held
-    // against the case and then removed. Deliberately a SEPARATE field from bt_enabled:
+    // Magnet/Hall gesture enable. Deliberately a SEPARATE field from bt_enabled:
     // BLE and the Hall sensor are independent concerns, and the DRV5032 on GPIO 9 is
     // OPTIONAL EXTRA HARDWARE that many remotes will never have fitted.
     //
     //   0 = off / sensor not fitted (DEFAULT — feature is opt-in; Hall behaves exactly as
     //       it did before this feature existed, i.e. BT dot only)
-    //   1 = magnet arms FM   (single 2s threshold — one buzz at 2s, arms on removal)
-    //   2 = magnet arms RTM  (single 2s threshold — one buzz at 2s, arms on removal)
-    //   3 = magnet arms FM at 2s / RTM at 5s (full two-tier gesture; the tier is decided
-    //       by how long the magnet was held, and arming fires on REMOVAL)
+    //   1 = magnet toggles FM (single 2s threshold — one buzz, acts on removal)
+    //   2/3 = legacy stored values, also treated as enabled FM for compatibility
     //
     // Valid range 0-3; default 0. Implemented by runMagGesture() in Hall.ino.
     uint16_t mag_mode;         // magnet/Hall gesture role; 0-3; default 0 (off / not fitted)
@@ -374,28 +374,18 @@ static_assert(sizeof(confStruct) == 136, "confStruct size mismatch — expected 
 confStruct usrConf;
 
 // ============================================================
-// V2.5-Evo - 2026-07-20 - MagGesture: mag_mode role decoding
-// Single source of truth for what the magnet gesture arms.
-// See the mag_mode field comment above for the mode table.
+// Magnet gesture enable. Every non-zero legacy value maps to the one remaining FM gesture.
 // ============================================================
 #define MAG_ROLE_NONE  0   // magnet gesture dormant; Hall behaves exactly as it did pre-gesture
-#define MAG_ROLE_FM    1   // single 2s threshold arms FM
-#define MAG_ROLE_RTM   2   // single 2s threshold arms RTM
-#define MAG_ROLE_BOTH  3   // two-tier: 2s → FM, 5s → RTM
+#define MAG_ROLE_FM    1   // single 2s threshold toggles FM
 
 // Returns what the magnet gesture should arm for the current mag_mode value.
-// Inputs: usrConf.mag_mode (0-3). Output: MAG_ROLE_NONE / _FM / _RTM / _BOTH.
-// No side effects. Mode 0 and anything out of range return NONE, so the gesture stays
+// Inputs: usrConf.mag_mode (0-3). Output: MAG_ROLE_NONE / MAG_ROLE_FM.
+// No side effects. Mode 0 returns NONE, so the gesture stays
 // completely dormant for remotes with no Hall sensor fitted (the default).
 static inline uint8_t magGestureRole()
 {
-  switch (usrConf.mag_mode)
-  {
-    case 1:  return MAG_ROLE_FM;
-    case 2:  return MAG_ROLE_RTM;
-    case 3:  return MAG_ROLE_BOTH;
-    default: return MAG_ROLE_NONE;
-  }
+  return usrConf.mag_mode == 0 ? MAG_ROLE_NONE : MAG_ROLE_FM;
 }
 
 // ============================================================
@@ -529,9 +519,10 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t foil_wh_hi = 0xFF;        // index 12 — session Wh×10 high byte
     uint8_t rx_heading = 0xFF;        // index 13 — GPS COG÷2 (0-179→0-358°); 0xFF = N/A
     uint8_t fm_heading_err = 127;     // index 14 — bearing error+127; 127 = no data
-    uint8_t fm_status = 0;            // index 15 — [7]=aux2_on [6]=aux1_on [5]=vesc_online [4]=rx_wetness [3:2]=heading_conf [1]=rtm_active [0]=fm_active
+    uint8_t fm_status = 0;            // index 15 — [7]=aux2 [6]=aux1 [5]=VESC [4]=wet [3:2]=heading conf [1]=FM_RETURN [0]=FM steering active
     uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state from the RX FM brain.
-                                      //   [0]=armed [1]=engaged [2]=armed-not-ready(RX: latch not proven) [3]=fault-stop(sticky 6s).
+                                      //   [0]=armed [1]=engaged [2]=not-ready [3]=fault [4]=FM_RETURN
+                                      //   [5]=legacy done/reserved [6]=geometry warning [7]=F4-front warning.
                                       //   V2.5-Evo - 2026-07-20 - Batch T: repurposed the unused reserved_tx_imu byte (was 0xFF).
                                       //   Default 0 (not 0xFF) so that before any RX packet arrives no FM bit reads as set — matches
                                       //   the RX-side default. Written by the generic index-addressed telemetry unpack in Radio.ino.
@@ -548,6 +539,10 @@ struct __attribute__((packed)) TelemetryPacket {
 #define FM_FLAG_ENGAGED   0x02  // bit1: RX FM engaged (actively steering / capping)
 #define FM_FLAG_NOTREADY  0x04  // bit2: RX-side armed-not-ready (separation latch not yet proven)
 #define FM_FLAG_FAULT     0x08  // bit3: RX fault-stop, sticky 6s (already surprise-gated on the RX)
+#define FM_FLAG_RETURN    0x10  // bit4: RX is in FM_RETURN (trigger may currently pause motion)
+#define FM_FLAG_DONE      0x20  // bit5: legacy RX RETURN->IDLE completion; retained for old-RX compatibility
+#define FM_FLAG_GEOMETRY  0x40  // bit6: radial/separation warning only; RX control is unchanged
+#define FM_FLAG_FRONT_LOST 0x80 // bit7: F4 front-position warning only; RX control is unchanged
 // Link-health window: the TX treats the RX link as alive only while a packet has landed within
 // this many ms (matches the existing `millis()-last_packet < 1000` failsafe window used for the
 // bargraphs/vibration connectivity checks). Used by the FM readiness OR and the engaged gate.
@@ -672,28 +667,9 @@ volatile uint8_t steer_sent = 0; // Steering value actually sent over radio
 // before reading type/value. volatile prevented compiler caching but not CPU store-buffer
 // reordering; std::atomic release/acquire prevents sendData from observing count>0
 // while type/value are still stale in the loop task's store buffer.
-std::atomic<uint8_t> rtm_meta_type  {0};    // 0xF1=RTM state, 0xF2=FM override
-std::atomic<uint8_t> rtm_meta_value {0};    // for 0xF1: 0=inactive 1=active; for 0xF2: 0-4 FM mode
+std::atomic<uint8_t> rtm_meta_type  {0};    // 0xF2=FM declaration, 0xF4=aux control; 0xF1 remains reserved
+std::atomic<uint8_t> rtm_meta_value {0};    // for 0xF2: 0-4 FM mode; for 0xF4: aux flags byte
 std::atomic<uint8_t> rtm_meta_count {0};    // bursts remaining; 0 = idle (value is always 0 or 3)
-
-// V2.5-Evo - 2026-04-25 - P7 RTM throttle cap.
-// V2.5-Evo - 2026-05-13 - SW32 M3: changed volatile→std::atomic<T>.
-// Written by the loop task via RTMState.ino; read by sendData via calcFinalThrottle().
-// 255 = no cap (RTM not active). During RTM ACTIVE, set to the ramped cap value
-// (30-70% of 255). Applied in calcFinalThrottle(). RTM can only subtract from
-// user throttle — never add. Creator safety philosophy enforced here.
-std::atomic<uint8_t> rtm_thr_cap_tx {255};
-std::atomic<bool>    rtm_tx_active  {false};
-
-// V2.5-Evo - 2026-06-05 - C-1: 2nd independent throttle gate during RTM arm ceremony.
-// true only while rtm_tx_state == RTM_ARMED (the blocking arm window). Read by sendData()
-// to hard-zero the throttle byte independently of rtm_thr_cap_tx. Defined in RTMState.ino.
-bool rtmIsArming();
-
-// V2.5-Evo - 2026-04-28 - P9 S4: RTM arm distance captured at engage moment.
-// Used by R5 proximity bar to set the 100% reference distance.
-// RAM only — never written to SPIFFS. Reset to 0.0f when RTM disengages.
-float rtm_arm_dist_m = 0.0f;
 
 //-1 = left, 1 = right input
 volatile int tog_input = 0;

@@ -47,7 +47,6 @@ const CfgFieldSpec kCfgFields[] = {
   {"boogie_vmax_in_followme_kmh", CFG_FLOAT, offsetof(confStruct, boogie_vmax_in_followme_kmh), true, false, true, 0.0f, 100.0f, 1, false},
   {"min_dist_m", CFG_FLOAT, offsetof(confStruct, min_dist_m), true, false, true, 0.0f, 1000.0f, 1, false},
   {"followme_smoothing_band_m", CFG_FLOAT, offsetof(confStruct, followme_smoothing_band_m), true, false, true, 0.0f, 1000.0f, 1, false},
-  {"foiler_low_speed_kmh", CFG_FLOAT, offsetof(confStruct, foiler_low_speed_kmh), true, false, true, 0.0f, 100.0f, 1, false},
   {"zone_angle_enter_deg", CFG_FLOAT, offsetof(confStruct, zone_angle_enter_deg), true, false, true, 0.0f, 180.0f, 1, false},
   {"zone_angle_exit_deg", CFG_FLOAT, offsetof(confStruct, zone_angle_exit_deg), true, false, true, 0.0f, 180.0f, 1, false},
   {"near_diag_offset_deg", CFG_FLOAT, offsetof(confStruct, near_diag_offset_deg), true, false, true, 0.0f, 180.0f, 1, false},
@@ -71,12 +70,10 @@ const CfgFieldSpec kCfgFields[] = {
   {"gps_max_pair_dist_m",    CFG_FLOAT, offsetof(confStruct, gps_max_pair_dist_m),    true, false, true, 50.0f, 2000.0f, 1, false},
   {"gps_max_speed_diff_kmh", CFG_FLOAT, offsetof(confStruct, gps_max_speed_diff_kmh), true, false, true, 10.0f,  200.0f, 1, false},
   // V2.5-Evo - 2026-04-25 - Priority 7 RTM Phase C + RX safety parameters
-  {"rtm_vesc_speed_diff_kmh",  CFG_FLOAT, offsetof(confStruct, rtm_vesc_speed_diff_kmh),  true, false, true,  5.0f, 50.0f,   1, false},
   {"vesc_erpm_per_kmh",        CFG_FLOAT, offsetof(confStruct, vesc_erpm_per_kmh),        true, false, true,  0.0f, 9999.0f, 1, false},
   {"rtm_rx_enabled",           CFG_U16,   offsetof(confStruct, rtm_rx_enabled),           true, false, true,  0.0f,  1.0f,   0, false},
   {"rtm_rx_override_steering", CFG_U16,   offsetof(confStruct, rtm_rx_override_steering), true, false, true,  0.0f,  1.0f,   0, false},
   {"rtm_compass_required",     CFG_U16,   offsetof(confStruct, rtm_compass_required),     true, false, true,  0.0f,  1.0f,   0, false},
-  {"rtm_stop_distance_m",      CFG_U16,   offsetof(confStruct, rtm_stop_distance_m),      true, false, true,  1.0f, 50.0f,   0, false},
   // V2.5-Evo - 2026-04-29 - Bundle B: configurable VESC UART timeout (replaces hardcoded 20s)
   {"vesc_timeout_s",           CFG_U16,   offsetof(confStruct, vesc_timeout_s),           true, false, true,  5.0f, 60.0f,   0, false},
   // V2.5-Evo - 2026-04-30 - Bundle E: configurable GPS polling rate (replaces hardcoded 1Hz cadence)
@@ -94,8 +91,8 @@ const CfgFieldSpec kCfgFields[] = {
   // /api/config never returned them and cfgSetValueByKey() rejected them as unknown keys, so the RTM Phase-2
   // speed governor and the Phase 1→2 align threshold were stuck at their defaultConf values. METADATA ROWS
   // ONLY — no struct change, no size change (stays 184), no SW_VERSION bump. Ranges mirror WebUiEmbedded:
-  // rtm_target_speed_kmh float 0-20 km/h (0 = governor disabled), rtm_align_threshold_deg u16 10-90 deg.
-  {"rtm_target_speed_kmh",     CFG_FLOAT, offsetof(confStruct, rtm_target_speed_kmh),     true, false, true,  0.0f,  20.0f,  1, false},
+  // Historical key, now FM Return target speed. 0 uses the safe default; return is capped at 8 km/h.
+  {"rtm_target_speed_kmh",     CFG_FLOAT, offsetof(confStruct, rtm_target_speed_kmh),     true, false, true,  0.0f,   8.0f,  1, false},
   {"rtm_align_threshold_deg",  CFG_U16,   offsetof(confStruct, rtm_align_threshold_deg),  true, false, true, 10.0f,  90.0f,  0, false},
   {"logger_en", CFG_U16, offsetof(confStruct, logger_en), true, false, true, 0.0f, 1.0f, 0, false},
   {"paired", CFG_U16, offsetof(confStruct, paired), true, false, true, 0.0f, 1.0f, 0, false},
@@ -370,10 +367,10 @@ bool cfgValidateCrossField(confStruct &candidate, String &err)
   {
 
     candidate.rtm_compass_required = 0;
-    Serial.println("NOTE: Heading Source is GPS COG only, so RTM Compass Required was set to 0.");
+    Serial.println("NOTE: Heading Source is GPS COG only, so FM Return Heading Required was set to 0.");
     Serial.println("      That gate needs a valid heading of ANY kind to arm, and with the compass");
-    Serial.println("      off there is none until the buggy is moving - so RTM could never arm.");
-    Serial.println("      RTM now steers only above the COG minimum speed, and holds straight below.");
+    Serial.println("      off there is none until the buggy is moving - so FM could never steer from rest.");
+    Serial.println("      FM now steers only above the COG minimum speed, and holds straight below.");
 
   }
 

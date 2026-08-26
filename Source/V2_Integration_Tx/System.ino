@@ -896,7 +896,7 @@ void checkCharger()
   setBrightness(0x0F);
 }
 
-volatile uint8_t current_vib_pattern = 0;  // active haptic pattern: 0=none, 1=2 short, 2=5 short, 3=5 long, 4=2 fast short (RTM/FM ARM confirm), 5=1 short (magnet 2s "release for FM" advisory), 6=3 fast short (magnet 5s "release for RTM" advisory), 7=1 long (UNCOMMANDED RTM/FM stop, or an arm refusal — request it via vib_stop_pending, never by writing 7 here)
+volatile uint8_t current_vib_pattern = 0;  // active haptic pattern: 0=none, 1=2 short, 2=5 short, 3=5 long, 4=2 fast short (FM ARM confirm), 5=1 short (magnet 2s "release for FM" advisory), 6=3 fast short (legacy advisory), 7=1 long (uncommanded FM stop / arm refusal; request via vib_stop_pending), 8=1 medium (FM geometry warning, repeated every 3s)
 
 // ============================================================
 // STOP-BUZZ REQUEST FLAG - how Pattern 7 gets to actually play
@@ -1110,6 +1110,15 @@ void vibrationTask(void *parameter) {
       digitalWrite(P_MOT, HIGH); vTaskDelay(pdMS_TO_TICKS(750));
       digitalWrite(P_MOT, LOW);
       if (current_vib_pattern == 7) current_vib_pattern = 0;
+    }
+    // Pattern 8 — ONE medium 300 ms pulse. runFmLoop() repeats it every 3 s while an ACTIVE
+    // Follow-Me geometry warning is present, including with the trigger released. It is shorter
+    // than the 750 ms STOP pulse and longer than the 150 ms advisory, so all three remain distinct
+    // by feel. A pending STOP is promoted immediately after this bounded single pulse.
+    else if (current_vib_pattern == 8) {
+      digitalWrite(P_MOT, HIGH); vTaskDelay(pdMS_TO_TICKS(300));
+      digitalWrite(P_MOT, LOW);
+      if (current_vib_pattern == 8) current_vib_pattern = 0;
     }
 
     // Sleep briefly to prevent hoarding the CPU

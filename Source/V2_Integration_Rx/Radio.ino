@@ -327,25 +327,9 @@ static void gpsPhaseBCheck()
   gps_phase_b_prev_tx_ms  = now;
 }
 
-// V2.5-Evo - 2026-04-25 - P7: Handle 0xF1 RTM state meta-packet from TX.
-// pkt: 6-byte buffer. byte[3]=0xF1, byte[4]: 0=RTM deactivate, 1=RTM activate.
-// Sets rtm_rx_active. Safety gates in RTMState.ino may override during active RTM.
-static void processRtmStatePacket(const uint8_t *pkt)
-{
-  uint8_t new_state = pkt[4];
-  if (new_state == 0)
-  {
-    rtm_rx_active         = false;
-    rtm_rx_emergency_stop = false;
-    Serial.println("RTM [RX] deactivated by TX");
-  }
-  else if (new_state == 1)
-  {
-    // RTM state machine in RTMState.ino will run safety gates on next iteration.
-    rtm_rx_active = true;
-    Serial.println("RTM [RX] activation requested by TX");
-  }
-}
+// 0xF1 was the standalone RTM state packet. RTM has been retired in favour of FM_RETURN;
+// keeping the byte reserved prevents an old TX throttle value from being misread as ordinary
+// control, but new firmware never emits it and RX deliberately ignores it fail-closed.
 
 // V2.5-Evo - 2026-04-25 - P7: Handle 0xF2 FM override meta-packet from TX.
 // pkt: 6-byte buffer. byte[3]=0xF2, byte[4]: FM mode 0-4.
@@ -491,10 +475,7 @@ void triggeredReceive(void *parameter) {
 
               if (rcvArray[3] == 0xF1)
               {
-                // ---- RTM state meta-packet ----
-                // TX signals RTM active (1) or inactive (0). No telemetry reply.
-                last_packet = millis();  // meta-packet proves TX is alive
-                processRtmStatePacket(rcvArray);
+                Serial.println("FM [RX] ignored retired 0xF1 RTM packet; use an F1-F4 declaration and FM_RETURN");
               }
               else if (rcvArray[3] == 0xF2)
               {

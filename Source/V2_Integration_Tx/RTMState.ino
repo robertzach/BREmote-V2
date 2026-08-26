@@ -70,8 +70,6 @@ extern volatile uint8_t current_vib_pattern;
 extern volatile bool    vib_stop_pending;   // set true to REQUEST the Pattern 7 STOP buzz (defined in
                                             // System.ino). Never write current_vib_pattern = 7 directly:
                                             // the flag is what makes the stop buzz preempt and survive.
-extern float rtm_arm_dist_m;  // defined in BREmote_V2_Tx.h — captured at RTM engage moment
-
 // ---- GPS-aware blocking delay ----
 // Replaces bare delay() calls in the arm ceremony and mode confirms.
 // Drains Serial1 in 10ms chunks so gps_tx.location.age() stays fresh.
@@ -88,397 +86,6 @@ static void gpsKeepAliveDelay(uint32_t ms)
   }
 }
 
-// ============================================================
-// RTM STATE MACHINE
-// ============================================================
-
-typedef enum { RTM_IDLE, RTM_ARMED, RTM_SQUEEZE_WAIT, RTM_ACTIVE, RTM_COOLDOWN } RtmTxState;
-
-static RtmTxState  rtm_tx_state        = RTM_IDLE;
-
-// V2.5-Evo - 2026-06-05 - C-1: 2nd independent throttle gate. True only during the blocking
-// RTM arm ceremony (RTM_ARMED), cleared on every exit (→RTM_ACTIVE success / →RTM_IDLE fail).
-// sendData() reads this to hard-zero the throttle byte regardless of rtm_thr_cap_tx.
-bool rtmIsArming() { return rtm_tx_state == RTM_ARMED; }
-static unsigned long rtm_arm_start_ms  = 0;   // when ARMED state was entered
-static unsigned long rtm_active_start_ms = 0; // when ACTIVE state was entered
-static unsigned long rtm_release_ms    = 0;   // when throttle was last released during ACTIVE
-static unsigned long rtm_cooldown_ms   = 0;   // when COOLDOWN state was entered
-static unsigned long rtm_squeeze_ms    = 0;   // when SQUEEZE_WAIT was entered
-// File-scope so setRtmArmed() can reset it. Inside a switch case it can't be reached
-// externally; stale value after arm-window timeout would skip the 500ms hold check.
-static unsigned long rtm_hold_start    = 0;   // single-mode: when thr_scaled first crossed 30%
-
-// Temporary 4× multiplier on the GPS staleness threshold used by Gate 2 in runRtmLoop().
-// runDoubleSqueezeArm() blocks loop() for up to rtm_arm_window_s seconds, freezing GPS
-// polling. Without this, Gate 2 fires immediately on the first runRtmLoop() call after
-// the ceremony because GPS age >> rtm_gps_timeout_ms. Set at ceremony start; cleared by
-// rtmDisengage() (covers all RTM_ACTIVE exit paths) and the two ceremony timeout returns.
-// TODO: remove when arm ceremony is refactored to non-blocking.
-static uint32_t rtm_arm_gps_timeout_override = 0;
-
-// FM session-init and keepalive state (Changes B + E)
-static bool          fm_session_init_done = false;  // Change B: true once last_fm_mode seeded from SPIFFS this session
-static unsigned long fm_last_sync_ms      = 0;      // Change E: millis() of last 0xF2 keepalive; 0 when FM disarmed
-
-// ---- Compute the current throttle cap for the ramp ----
-// Returns 0-255. During ACTIVE, ramps from rtm_throttle_start_pct→max over rtm_ramp_duration_s.
-uint8_t calcRtmThrottleCap()
-{
-  if (rtm_tx_state != RTM_ACTIVE) return 255;  // no cap outside ACTIVE
-  unsigned long elapsed = millis() - rtm_active_start_ms;
-  float t = (float)elapsed / ((float)usrConf.rtm_ramp_duration_s * 1000.0f);
-  if (t > 1.0f) t = 1.0f;
-  float pct = (float)usrConf.rtm_throttle_start_pct
-            + t * (float)(usrConf.rtm_throttle_max_pct - usrConf.rtm_throttle_start_pct);
-  return (uint8_t)(pct * 255.0f / 100.0f);
-}
-
-// ---- Called by handleGearToggle() when RTM combo gesture completes ----
-// Bug2: fm_armed cleared first — RTM and FM are mutually exclusive.
-// Bug4: runDoubleSqueezeArm() now handles both single and double squeeze, fully blocking.
-//       On return rtm_tx_state is RTM_ACTIVE or RTM_IDLE; RTM_ARMED case in runRtmLoop() is dead code.
-void setRtmArmed()
-{
-  if (!usrConf.rtm_enabled || !usrConf.gps_en) return;
-  fmSilentDisarm();                // Bug2 + Finding 1-4: disarm FM and notify RX via 0xF2/0 before RTM arms
-  rtm_tx_state     = RTM_ARMED;
-  rtm_arm_start_ms = millis();
-  rtm_hold_start   = 0;
-  rtm_tx_active    = false;
-  // SAFETY FIX: sendData() FreeRTOS task keeps running while loop() is blocked inside
-  // runDoubleSqueezeArm(). With cap=255, every arm-squeeze byte goes straight to RX and
-  // drives the motor at full duty with rtm_rx_active=0 (no RX gate suppression).
-  // Hold cap=0 for the entire ceremony; all abort paths below restore it to 255;
-  // success path leaves it at 0 so calcRtmThrottleCap() ramp takes over on first RTM_ACTIVE tick.
-  rtm_thr_cap_tx   = 0;
-  queueMetaPacketBurst(0xF1, 0);   // tell RX: RTM armed but not yet active
-  if (current_vib_pattern == 0) current_vib_pattern = 4;         // Pattern 4: 2 fast short = RTM arm confirm
-  runDoubleSqueezeArm();            // Bug4: handles both single and double squeeze
-}
-
-// ---- Called to disengage RTM from the gesture layer (user-initiated) ----
-// "St" confirm handled inside rtmDisengage().
-// Every caller of THIS wrapper is a deliberate rider action (the magnet toggle in Hall.ino and the
-// Gate 4 steer-exit), so it always passes commanded = true → no STOP buzz.
-static void setRtmDisarmed()
-{
-  rtmDisengage(true);
-}
-
-// ---- Disengage RTM: return to COOLDOWN, notify RX, confirm with haptic + display ----
-// V2.5-Evo - 2026-04-28 - P9 Bug1D: Pattern 4 and "St P" moved here so ALL exit paths
-// (steer-exit, GPS stale, max runtime, throttle release) fire the confirm consistently.
-// INPUT: commanded — true = stay SILENT, false = fire the Pattern 7 STOP buzz. Since the 2026-08-17
-//        revision the test is no longer "did the rider press something" but "is this a FAULT or a
-//        TIMEOUT": true for the deliberate stops (magnet toggle, steer-exit) AND for Gate 3, a pure
-//        timeout the rider's own released trigger caused; false for the GPS-stale fault and for
-//        Gate 1 (max runtime), the only timer here that can fire while he is still squeezing.
-// OUTPUT: none. SIDE EFFECTS: state → RTM_COOLDOWN, throttle cap restored to 255, 0xF1/0 sent to RX,
-//        STOP buzz requested when uncommanded, and a BLOCKING 2s "St" display hold.
-static void rtmDisengage(bool commanded)
-{
-  rtm_tx_state    = RTM_COOLDOWN;
-  rtm_cooldown_ms = millis();
-  rtm_tx_active   = false;
-  displayBuffer[6] = 0x0000;     // Bug3: clear R5 proximity bar row — updateR5ProximityBar() left
-                                 // stale data here; without clearing, FM mode sees a phantom pixel
-  rtm_thr_cap_tx  = 255;
-  rtm_arm_dist_m  = 0.0f;        // reset R5 bar reference (defined in BREmote_V2_Tx.h)
-  rtm_arm_gps_timeout_override = 0;  // clear GPS timeout multiplier — ceremony fully over
-  queueMetaPacketBurst(0xF1, 0);  // tell RX: RTM inactive
-
-  // Request the STOP confirm BEFORE the blocking display so the buzz runs during the 2s flash.
-  // V2.5-Evo - 2026-08-16 - HAPTIC CUT: silent on a DELIBERATE disarm. You just did it, and the
-  // display already says so - the stop confirm appears. A buzz confirming your own action is noise,
-  // and it was the single most frequent buzz in the system.
-  // V2.5-Evo - 2026-08-17 - StopBuzz: that cut was written here, at the SHARED sink, so it also
-  // silenced every safety gate that ends up in this same function. The fix is not to buzz them all
-  // back - it is to let the caller decide, on one rule: A PURE TIMEOUT IS SILENT, A FAULT BUZZES.
-  // Mid-wave the rider has no attention to spare for decoding a buzz, and the more buzzes there
-  // are the less each one is read. So Pattern 7 is spent only where it buys something:
-  //   FAULT   -> Gate 2 (TX GPS lost). A sensor died; nothing the rider did explains the stop.
-  //   TIMEOUT -> Gate 3 (trigger released 4s). His own hand caused it, "St" shows it. Silent.
-  //   Gate 1 (max runtime) buzzes despite being a timer, and it is the ONE exception: it has no
-  //   throttle precondition, so it can fire while he is still squeezing - and rtm_thr_cap_tx was
-  //   restored to 255 a few lines above, which un-clamps Throttle.ino's `if (result >
-  //   rtm_thr_cap_tx)` in the same instant. The cap is 30-90% by config range and can never BE
-  //   255, so that step to raw manual throttle is always real, and the sendData task keeps
-  //   transmitting it throughout the blocking 2s hold below. That transition earns a warning;
-  //   the two release-driven timeouts, where the trigger is already at rest, do not.
-  if (!commanded) vib_stop_pending = true;   // Pattern 7: one long buzz = a FAULT stopped the system
-
-  // Large-font stop confirm: LET_S(32) renders as "5", LET_T(20) renders as "t".
-  // "5t" appearance is intentional — matches large-font style of F0-F3 confirms.
-  DISP_LOCK(); displayDigits(LET_S, LET_T); updateDisplay(); DISP_UNLOCK();
-  gpsKeepAliveDelay(2000);
-}
-
-// ---- Decode telemetry.rtm_distance to metres ----
-// Returns -1.0f if no valid distance available (telemetry.rtm_distance == 0xFF or 0x00).
-// Used by pre-arm check (Bug 1B) and R5 proximity bar.
-static float decodeRtmDistanceM()
-{
-  uint8_t d = telemetry.rtm_distance;
-  // Bug A fix: treat 0x00 as "no data" same as 0xFF.
-  // 0x00 is the zero-initialized default before any RX telemetry packet arrives.
-  // Previously returned 0.0m → pre-arm check saw 0.0m ≤ disengage threshold → always rejected.
-  if (d == 0xFF || d == 0x00) return -1.0f;
-  if (d < 100) return d / 10.0f;      // tenths of metre (0.0–9.9 m)
-  return (float)(d - 90);             // whole metres (10–164 m)
-}
-
-// ============================================================
-// V2.5-Evo - 2026-04-28 - Bug4: Full rewrite. Handles both single and double squeeze.
-// Always called blocking from setRtmArmed(). Uses rtm_arm_start_ms as shared arm-window ref.
-// "A r" and "rn ×2" ceremony removed. Arm confirmation is unlockAnimation() + "r n" 2s.
-//
-// Single (rtm_double_squeeze_en==0):
-//   blink "r n" → thr >30% held 500ms → unlockAnimation()+P4 → "r n" 2s → dist check → ACTIVE
-//
-// Double (rtm_double_squeeze_en==1):
-//   blink "r n" → 1st thr >30% held 500ms → unlockAnimation() → blank 800ms →
-//   2nd thr >30% held 500ms → unlockAnimation()+P4 → "r n" 2s → dist check → ACTIVE
-//
-// On return: rtm_tx_state == RTM_ACTIVE (success) or RTM_IDLE (timeout / rejected).
-// ============================================================
-static void runDoubleSqueezeArm()
-{
-  // Relax the GPS staleness threshold (Gate 2) for the duration of this blocking ceremony.
-  // loop() is suspended here for up to rtm_arm_window_s seconds, so GPS age accumulates.
-  // rtmDisengage() clears this on every RTM_ACTIVE exit path.
-  rtm_arm_gps_timeout_override = (uint32_t)usrConf.rtm_gps_timeout_ms * 4UL;
-
-  // Show "r n" while waiting for first squeeze
-  displayDigitZone("r n");
-  advanceArrow();   // prime arrow before loop; advanceArrow() calls updateDisplay() internally
-
-  // Wait for first squeeze: thr > 30% (thr_scaled > 76) held for 500ms continuous
-  bool          first_ok = false;
-  unsigned long hold_ms  = 0;
-  while (millis() - rtm_arm_start_ms < (unsigned long)usrConf.rtm_arm_window_s * 1000UL)
-  {
-    advanceArrow();   // bob arrow every 100ms while waiting for squeeze
-    if (thr_scaled > 76)
-    {
-      if (hold_ms == 0) hold_ms = millis();
-      if (millis() - hold_ms >= 500UL) { first_ok = true; hold_ms = 0; break; }
-    }
-    else { hold_ms = 0; }
-    delay(100);
-    checkSerial();
-  }
-  if (!first_ok)
-  {
-    rtm_arm_gps_timeout_override = 0;  // ceremony aborted — restore normal GPS threshold
-    rtm_thr_cap_tx = 255;              // restore throttle passthrough — arm aborted
-    DISP_LOCK(); for (int i = 0; i < 8; i++) displayBuffer[i] = 0x0000; updateDisplay(); DISP_UNLOCK();
-    rtm_tx_state = RTM_IDLE;
-    return;
-  }
-
-  if (!usrConf.rtm_double_squeeze_en)
-  {
-    // Single-squeeze: unlock, pause, then Pattern 4 + "r n" arm confirm
-    unlockAnimation();
-    gpsKeepAliveDelay(750);   // V2.5-Evo - 2026-06-05: was 250 — +500ms so the "armed" buzz is clearly separated from the squeeze
-    if (current_vib_pattern == 0) current_vib_pattern = 4;   // Pattern 4 after visual unlock completes
-    DISP_LOCK(); displayDigitZone("r n"); updateDisplay(); DISP_UNLOCK();
-    gpsKeepAliveDelay(2000);
-  }
-  else
-  {
-    // Double-squeeze: first unlock (no P4 yet), pause, then black screen, then wait for second squeeze
-    unlockAnimation();
-    gpsKeepAliveDelay(250);
-    DISP_LOCK(); for (int i = 0; i < 8; i++) displayBuffer[i] = 0x0000; updateDisplay(); DISP_UNLOCK();
-    gpsKeepAliveDelay(800);
-
-    bool second_ok = false;
-    hold_ms = 0;
-    advanceArrow();   // prime arrow for second wait
-    while (millis() - rtm_arm_start_ms < (unsigned long)usrConf.rtm_arm_window_s * 1000UL)
-    {
-      advanceArrow();   // bob arrow every 100ms while waiting for second squeeze
-      if (thr_scaled > 76)
-      {
-        if (hold_ms == 0) hold_ms = millis();
-        if (millis() - hold_ms >= 500UL) { second_ok = true; hold_ms = 0; break; }
-      }
-      else { hold_ms = 0; }
-      delay(100);
-      checkSerial();
-    }
-    if (!second_ok)
-    {
-      rtm_arm_gps_timeout_override = 0;  // ceremony aborted — restore normal GPS threshold
-      rtm_thr_cap_tx = 255;              // restore throttle passthrough — arm aborted
-      DISP_LOCK(); for (int i = 0; i < 8; i++) displayBuffer[i] = 0x0000; updateDisplay(); DISP_UNLOCK();
-      rtm_tx_state = RTM_IDLE;
-      return;
-    }
-
-    // Second squeeze confirmed: unlock, pause, then Pattern 4 + "r n" arm confirm
-    unlockAnimation();
-    gpsKeepAliveDelay(750);   // V2.5-Evo - 2026-06-05: was 250 — +500ms so the "armed" buzz is clearly separated from the squeeze
-    if (current_vib_pattern == 0) current_vib_pattern = 4;   // Pattern 4 after visual unlock completes
-    DISP_LOCK(); displayDigitZone("r n"); updateDisplay(); DISP_UNLOCK();
-    gpsKeepAliveDelay(2000);
-  }
-
-  // Pre-arm distance check: reject if already inside the disengage threshold
-  float prearm_m = decodeRtmDistanceM();
-  if (prearm_m >= 0.0f && prearm_m <= (float)usrConf.rtm_disengage_distance_m)
-  {
-    rtm_arm_gps_timeout_override = 0;  // restore GPS threshold — arm rejected
-                                        // Finding 2-1: only exit path that previously left
-                                        // the 4× override stale; all other exits
-                                        // (timeouts + rtmDisengage) already clear it
-    rtm_thr_cap_tx = 255;              // restore throttle passthrough — arm rejected
-    // Pattern 7: one long buzz = the arm was REFUSED. Kept (an arm refusal is the rider believing
-    // RTM is running when it is not), and routed through the pending flag like every other stop.
-    vib_stop_pending = true;
-    // Large-font stop confirm on arm rejection.
-    DISP_LOCK(); displayDigits(LET_S, LET_T); updateDisplay(); DISP_UNLOCK();
-    gpsKeepAliveDelay(2000);
-    rtm_tx_state  = RTM_IDLE;
-    rtm_tx_active = false;
-    queueMetaPacketBurst(0xF1, 0);
-    return;
-  }
-
-  // Bug B fix: drain Serial1 NMEA backlog before activating.
-  // loop() was suspended for the entire ceremony; gps_tx.encode() was not called.
-  // gps_tx.location.age() has accumulated to ceremony duration (7-10s for double-squeeze).
-  // Gate 2 threshold is rtm_gps_timeout_ms × 4 = 8000ms — a normal user exceeds this.
-  // Processing the queued sentences refreshes age to near-zero before the first Gate 2 check.
-  // 300ms cap prevents blocking indefinitely if module is sending continuous data.
-  {
-    unsigned long drain_start = millis();
-    while (Serial1.available() && millis() - drain_start < 300UL)
-    {
-      gps_tx.encode(Serial1.read());
-    }
-  }
-
-  // Activate RTM
-  rtm_tx_state        = RTM_ACTIVE;
-  rtm_active_start_ms = millis();
-  rtm_tx_active       = true;
-  rtm_release_ms      = 0;
-  rtm_arm_dist_m      = decodeRtmDistanceM();
-  if (rtm_arm_dist_m < 0.0f) rtm_arm_dist_m = 0.0f;
-  queueMetaPacketBurst(0xF1, 1);
-}
-
-// ---- Called from loop() every ~110ms ----
-void runRtmLoop()
-{
-  if (!usrConf.rtm_enabled || !usrConf.gps_en) return;
-
-  unsigned long now = millis();
-
-  switch (rtm_tx_state)
-  {
-    // ---- IDLE: nothing to do; setRtmArmed() transitions out ----
-    case RTM_IDLE:
-      break;
-
-    // ---- ARMED: dead code — Bug4 moved all arm logic into runDoubleSqueezeArm() ----
-    // setRtmArmed() now calls runDoubleSqueezeArm() blocking for both single and double squeeze.
-    // On return rtm_tx_state is RTM_ACTIVE or RTM_IDLE — this case is never reached.
-    case RTM_ARMED:
-      rtm_tx_state = RTM_IDLE;
-      break;
-
-    // ---- SQUEEZE_WAIT: dead code path (Change 5) ----
-    // Double-squeeze arm is now fully blocking in runDoubleSqueezeArm(), called from setRtmArmed().
-    // This state can no longer be entered; retained for enum completeness only.
-    case RTM_SQUEEZE_WAIT:
-      rtm_tx_state = RTM_IDLE;
-      break;
-
-    // ---- ACTIVE: RTM running ----
-    case RTM_ACTIVE:
-    {
-      // Update throttle cap for ramp
-      rtm_thr_cap_tx = calcRtmThrottleCap();
-
-      // Gate 1: max runtime (0 = disabled — safety gates handle all real scenarios)
-      if (usrConf.rtm_max_runtime_s > 0 &&
-          now - rtm_active_start_ms > (unsigned long)usrConf.rtm_max_runtime_s * 1000UL)
-      {
-        // BUZZES — and it is the one timeout in this file that does. Every other timeout here can
-        // only fire because the trigger was already released; this gate has no throttle
-        // precondition, so it fires mid-squeeze, and rtmDisengage() lifts rtm_thr_cap_tx (30-90%
-        // by config range) back to 255 in the same instant. That is a silent step from capped RTM
-        // throttle to raw manual throttle with no gesture behind it. Off by default
-        // (rtm_max_runtime_s = 0), so keeping this buzz costs nothing against buzz saturation.
-        rtmDisengage(false);
-        break;
-      }
-
-      // Gate 2: TX GPS freshness — use 4× relaxed threshold in the cycles immediately after
-      // the blocking arm ceremony (GPS age may be high; rtm_arm_gps_timeout_override > 0
-      // until rtmDisengage() clears it on any RTM_ACTIVE exit path).
-      {
-        uint32_t gps_thr = (rtm_arm_gps_timeout_override > 0)
-                           ? rtm_arm_gps_timeout_override
-                           : (uint32_t)usrConf.rtm_gps_timeout_ms;
-        if (gps_tx.location.age() > gps_thr)
-        {
-          rtmDisengage(false);   // FAULT, not a timeout: the TX GPS died under RTM and nothing the
-                                 // rider did explains the stop → buzz
-          break;
-        }
-      }
-
-      // Gate 3: throttle release timeout — 4s gives time to re-apply before RTM disengages.
-      // Kept hardcoded (not SPIFFS) by design. Total re-arm window after release = ~6s (4s gate + 2s cooldown).
-      // V2.5-Evo - 2026-04-28 - P9 Bug1D: now calls rtmDisengage() so Pattern 4 + "St P" fire.
-      if (thr_scaled < 10)
-      {
-        if (rtm_release_ms == 0) rtm_release_ms = now;
-        if (now - rtm_release_ms > 4000UL)
-        {
-          // SILENT (2026-08-17 rule: a pure timeout is silent, a fault buzzes). This gate can only
-          // be reached because the rider let go and kept the trigger released for 4s — the stop
-          // follows his own hand and "St" already shows it. It is also the moment the cap lift in
-          // rtmDisengage() is harmless: thr_scaled < 10 means the shaped throttle sits far below
-          // the RTM cap, so restoring the cap to 255 changes nothing he can feel. Buzzing here
-          // spends the rider's attention on a non-event and devalues the fault buzz.
-          rtmDisengage(true);
-          break;
-        }
-      }
-      else
-      {
-        rtm_release_ms = 0;
-      }
-
-      // Gate 4: steering exit (P8 — if enabled, any significant steering input exits RTM)
-      if (usrConf.rtm_steer_exit_on_input && toggle_blocked_by_steer &&
-          abs((int)steer_scaled - 127) > 20)
-      {
-        setRtmDisarmed();   // COMMANDED: the rider deliberately steered out (opt-in gate) → silent
-        break;
-      }
-
-      // Display handled by renderRtmInfoDisplay() in loop() when rtm_tx_active==true
-      break;
-    }
-
-    // ---- COOLDOWN: wait 2s then return to IDLE ----
-    // showFullScreenMessage("St P", 2000) was called at disengage moment; by the time
-    // this state is polled, the 2s has already elapsed → transition to IDLE immediately.
-    case RTM_COOLDOWN:
-      if (now - rtm_cooldown_ms > 2000UL)
-      {
-        rtm_tx_state = RTM_IDLE;
-      }
-      break;
-  }
-}
 
 // ============================================================
 // FM STATE MACHINE
@@ -495,9 +102,11 @@ void runRtmLoop()
 // DISARM (any of):
 //   - Same combo again (LEFT tap + RIGHT hold 5s) — toggle
 //   - Arm window expires (fm_arm_window_s) before any throttle input — auto-disarm
-//   - RTM preemption, RX-reported FM fault, or F0 selection
+//   - RX-reported FM fault, legacy-RX FM_RETURN completion, or F0 selection
 // ============================================================
 
+static bool          fm_session_init_done = false;  // last_fm_mode seeded from config this session
+static unsigned long fm_last_sync_ms      = 0;      // last 0xF2 keepalive; 0 while disarmed
 volatile bool        fm_armed         = false;  // FM arm state; RAM only, cleared on power cycle. Not static — extern'd by Display.ino (R5 bar)
                                                  // volatile: read by updateBargraphs() (task), written by loop()
 static uint8_t       last_fm_mode     = 1;      // last active FM mode (1-4); defaults F1; RAM only
@@ -511,6 +120,20 @@ bool isFmArmed() { return fm_armed; }
 // rising-edge detection in runFmLoop(). Updated every runFmLoop() tick so re-arming always
 // starts from a fresh baseline (no stale edge). RAM only.
 static uint8_t fm_flags_prev = 0;
+
+// RX geometry warnings use the two free high bits of fm_flags. They are conditions, not FM
+// lifecycle states, and repeat even with the trigger released. They never imply that RX changed
+// steering authority or cap. Pattern 8 is queued immediately on an edge and every 3 s
+// thereafter; higher-priority haptics defer rather than consume a due warning.
+static const unsigned long kFmGeometryWarningPeriodMs = 3000UL;
+static unsigned long fm_geometry_warning_last_ms = 0;
+static uint8_t       fm_geometry_warning_prev    = 0;
+
+static void fmResetGeometryWarningScheduler()
+{
+  fm_geometry_warning_last_ms = 0;
+  fm_geometry_warning_prev    = 0;
+}
 
 // ============================================================
 // V2.5-Evo - 2026-07-20 - Batch T (Fable FM v1.4): FM arm-time and display readiness gating.
@@ -552,6 +175,7 @@ static void fmSilentDisarm()
   fm_armed         = false;
   fm_throttle_seen = false;
   fm_last_sync_ms  = 0;
+  fmResetGeometryWarningScheduler();
   queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX
 }
 
@@ -568,6 +192,7 @@ static void fmDisarm(bool commanded)
   fm_armed         = false;
   fm_throttle_seen = false;
   fm_last_sync_ms  = 0;            // Change E: clear keepalive timer
+  fmResetGeometryWarningScheduler();
   queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX (followme_mode=0)
   // V2.5-Evo - 2026-08-16 - HAPTIC CUT: silent on a DELIBERATE disarm. You just did it, and the
   // display already says so. A buzz confirming your own action is noise.
@@ -644,6 +269,17 @@ void cycleFmMode()
       fm_last_sync_ms = millis();
       fm_arm_ms       = millis();   // reset arm window — user is actively choosing a mode
     }
+    return;
+  }
+
+  // Backward compatibility with an older RX whose RETURN arrival was a two-sided terminal
+  // transition. Current RX firmware exits normal RETURN to FM_ARMED and never emits FM_FLAG_DONE.
+  // If an old RX reports it, re-acknowledge 0xF2/0 instead of sending a declaration it must reject.
+  if (telemetry.fm_flags & FM_FLAG_DONE)
+  {
+    queueMetaPacketBurst(0xF2, 0);
+    DISP_LOCK(); displayDigits(LET_I, LET_D); updateDisplay(); DISP_UNLOCK();
+    gpsKeepAliveDelay(1000);
     return;
   }
 
@@ -757,7 +393,21 @@ void runFmLoop()
   // re-gating needed. fm_flags_prev is updated every tick (armed or not) so a re-arm starts clean.
   uint8_t fm_flags_now = telemetry.fm_flags;
   bool fault_rising = (fm_flags_now & FM_FLAG_FAULT) && !(fm_flags_prev & FM_FLAG_FAULT);
+  bool done_rising  = (fm_flags_now & FM_FLAG_DONE)  && !(fm_flags_prev & FM_FLAG_DONE);
   fm_flags_prev = fm_flags_now;
+  if (fm_armed && done_rising)
+  {
+    // Legacy-RX FM_RETURN arrival, not a fault: stop the declaration and its keepalive so that RX's
+    // terminal FM_IDLE cannot be undone 30 s later. Current RX firmware does not take this path.
+    fm_armed         = false;
+    fm_throttle_seen = false;
+    fm_last_sync_ms  = 0;
+    fmResetGeometryWarningScheduler();
+    queueMetaPacketBurst(0xF2, 0);
+    DISP_LOCK(); displayDigits(LET_I, LET_D); updateDisplay(); DISP_UNLOCK();
+    gpsKeepAliveDelay(1000);
+    return;
+  }
   if (fm_armed && fault_rising)
   {
     // FAULT — and since the 2026-08-17 revision this is the ONLY FM path that buzzes. The RX
@@ -768,7 +418,34 @@ void runFmLoop()
     return;
   }
 
-  if (!fm_armed) return;
+  if (!fm_armed)
+  {
+    fmResetGeometryWarningScheduler();
+    return;
+  }
+
+  // Periodic FM geometry warning. This intentionally has NO throttle gate: once RX reports that
+  // RX sees invalid radial/front geometry, the rider gets one medium pulse immediately and every
+  // three seconds until RX clears the condition. Pattern 8 is informational and never
+  // overwrites a fault/stop or another pattern already in progress.
+  uint8_t geometry_warning_now = fm_flags_now & (FM_FLAG_GEOMETRY | FM_FLAG_FRONT_LOST);
+  if (!(fm_flags_now & FM_FLAG_ARMED)) geometry_warning_now = 0;
+  if (geometry_warning_now == 0)
+  {
+    fmResetGeometryWarningScheduler();
+  }
+  else
+  {
+    bool warning_changed = (geometry_warning_now != fm_geometry_warning_prev);
+    bool warning_due = warning_changed || fm_geometry_warning_last_ms == 0 ||
+        (now - fm_geometry_warning_last_ms) >= kFmGeometryWarningPeriodMs;
+    if (warning_due && current_vib_pattern == 0 && !vib_stop_pending)
+    {
+      current_vib_pattern = 8;  // one medium pulse; implemented in vibrationTask()
+      fm_geometry_warning_last_ms = now;
+    }
+    fm_geometry_warning_prev = geometry_warning_now;
+  }
 
   // Arm-window auto-disarm: if user never applied throttle since arming, disarm after fm_arm_window_s
   if (!fm_throttle_seen)

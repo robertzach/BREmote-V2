@@ -23,6 +23,9 @@ It is **not** an autopilot that drives on its own. The rule never changes:
 Follow-Me is autonomous *steering under your throttle hand*. You stay in charge of go/stop
 at all times.
 
+When you stop after the ride, **FM_RETURN** brings the buggy directly back toward you. It is
+part of the same Follow-Me session; there is no separate Return-to-Me mode to arm.
+
 ---
 
 ## 2. Before you ride
@@ -72,8 +75,8 @@ don't touch the throttle — so a slow takeoff, a wait, or a short swim won't lo
 
 ## 4. The whip — how Follow-Me engages
 
-Arming is not engaging. Follow-Me only **engages** (starts following) when the **geometry
-confirms you've actually separated** — not on a timer, not on a button:
+Arming is not engaging. Every F1–F4 mode only **engages** when the **radial GPS distance
+confirms you've actually separated** — not from side/front angles and not from a button:
 
 1. You're armed (from §3), throttle held.
 2. You whip and separate from the buggy.
@@ -105,11 +108,11 @@ your direction of travel):
 | **F3** | **Near-Left** | behind and to your left |
 | **F4** | **In Front** | ahead of you as a forward pacer |
 
-F4 never performs an autonomous overtake. Position the buggy ahead manually first. It engages only
-after the along-course lead exceeds `fm_engage_dist_m`, stays inside the configured front cone and
-remains proven for 2 seconds. If it ceases to be provably ahead, it stops in HOLD, clears the proof
-and requires a fresh front proof. Trigger release by itself does not clear a still-valid proof; the
-general stationary-near reset can clear it after 2 seconds below 2 km/h inside the engagement radius.
+F4 uses the same **radial** `>D_engage` 2-second proof as F1–F3. It may therefore drive from behind
+toward its forward target; there is no longer a no-autonomous-overtake guarantee. The signed front
+lead and front-cone angles are warning-only. If the front position is lost, one medium warning repeats
+every 3 seconds—even with the trigger released—but steering, throttle cap, state and separation proof
+continue unchanged.
 
 For F1/F3, the exact angle is set by **`near_diag_offset_deg`** — the number of degrees **off
 straight-behind**. Near-Right and Near-Left are mirror images of it; F4 does not use this offset:
@@ -130,21 +133,45 @@ Follow distance is a **separate** setting — see §8.
 
 ---
 
-## 6. Holds vs Stops — what pauses Follow-Me and what ends it
+## 6. Pauses vs Stops — what interrupts Follow-Me and what ends it
 
 Not every interruption is the same. Follow-Me tells them apart:
 
 | Situation | What it is | Follow-Me does | Re-arm needed? |
 |---|---|---|---|
-| **You release the trigger** | deadman | motor stops instantly; FM stays armed in HOLD; proof remains unless the stationary-near reset also completes | no |
-| **You stop inside the engagement distance** | latch reset | after 2 s below 2 km/h, the separation proof is cleared; fresh separation required | no mode re-arm, but new separation proof |
+| **You release the trigger normally** | deadman | motor stops instantly; state/proof stay; cap is not rewritten because input throttle is already zero | no |
+| **You stop beyond the engagement distance** | automatic return | after 2 s below 2 km/h, FM enters `FM_RETURN`; hold the trigger to bring the buggy directly toward you | no separate RTM arm |
+| **You stop inside the engagement distance but outside `min_dist_m`** | ordinary FM | no low-speed transition; FM continues while trigger is held | no |
 | **You steer manually while following** | temporary takeover | your steering wins; FM state and throttle cap stay active; centre the input to return steering to FM | no |
-| **You fall / slow down / get too close** | a **HOLD** (normal) | pauses (buggy stops), **stays armed**, resumes on its own at your next separation | **no** |
+| **`min_dist_m` is reached** | stop latch | cap 0 until trigger release; distance recovery alone does nothing; release restores manual cap 255 and clears separation proof | no re-arm, but new `>D_engage` proof |
+| **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
+| **F4 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
 | **GPS, compass, or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
 
-The idea: **falling is normal, so it stays ready.** A real failure is not, so it steps fully
-out and waits for you to deliberately re-arm — autonomy never silently restarts after a
-glitch.
+The 3-second geometry warning continues even when the trigger is released and never changes the
+control path. A real sensor/link failure is different: FM steps fully out and waits for a deliberate
+re-arm, so autonomy never silently restarts after a fault.
+
+### FM_RETURN — return after you stop
+
+If your filtered speed remains below **2 km/h** for 2 seconds while the buggy is farther away
+than the effective `fm_engage_dist_m`, the state changes from `FM_ARMED` or `FM_ACTIVE` to
+`FM_RETURN`. This also works when you arm while standing still before the tow.
+
+- The buggy first remains stopped during the 2-second proof, then steers directly toward your
+  current GPS position using the guarded FM heading controller.
+- The trigger remains the deadman: releasing it pauses the return without cancelling it.
+- Deliberate steering still has priority and temporarily suspends the automatic steering.
+- Entry clears the old separation latch.
+- If you move faster than 3 km/h for 1 second, return is cancelled to `FM_ARMED`.
+- Arrival at `distance < effective fm_engage_dist_m` stops first, clears the separation latch and
+  enters `FM_ARMED`. The selected F1–F4 declaration remains armed, but automatic control needs a
+  fresh 2-second radial proof above the engagement distance. Neither normal exit jumps directly to
+  `FM_ACTIVE` or disarms to `FM_IDLE`.
+- If the trigger is held when either normal exit occurs, cap 0 remains until you release it once;
+  otherwise manual cap 255 is restored immediately.
+- Return drive is limited by `rtm_target_speed_kmh` (historical config key; 0 means 5 km/h,
+  absolute firmware limit 8 km/h) and slows across `rtm_approach_zone_m`.
 
 The stop alarm (`St` + one long buzz) fires **only when it would surprise you** — i.e. a
 fault while you're holding the trigger. A stop after you've already let go just goes quiet.
@@ -159,6 +186,8 @@ fault while you're holding the trigger. A stop after you've already let go just 
 | **Bar sweeping** (scanner) | **armed and ready** — waiting for your whip |
 | **Bar blinking in place** | **armed but not ready yet** — still getting GPS / link. It flips to sweeping the moment it's ready. |
 | **Steady distance bar** | **following you** — grows/shrinks with distance |
+| **`rE` + blinking full bar** | **FM_RETURN** — returning directly toward you |
+| **`Id`** | legacy RX only: old return completion entered idle and disarmed |
 | **`St`** | stopped |
 
 **Haptics (by feel, no need to look):**
@@ -167,8 +196,8 @@ fault while you're holding the trigger. A stop after you've already let go just 
 |---|---|
 | two quick taps | armed |
 | **one long buzz** | stopped / disarmed |
+| **one medium pulse every 3 s** | radial/front geometry warning; FM control itself is unchanged |
 | one short pulse | magnet get-ready (release now for FM) |
-| three taps | magnet get-ready (release now for RTM) |
 
 ---
 
@@ -178,13 +207,15 @@ fault while you're holding the trigger. A stop after you've already let go just 
 |---|---|---|
 | `followme_mode` | geometry: 1 = Near-Right, **2 = Behind (default)**, 3 = Near-Left, 4 = In Front | TX seed for the arm gesture |
 | `near_diag_offset_deg` | angle off straight-behind (see §5) | **45** = Right 135° / Left 225° |
-| `min_dist_m` | hard-stop distance — throttle cut to 0 if the buggy gets this close | |
+| `min_dist_m` | ACTIVE hard-stop distance | cap 0 latches until trigger release; release clears separation proof |
 | `followme_smoothing_band_m` | decel band above the hard stop | follow distance = `min_dist_m` + this |
 | `boogie_vmax_in_followme_kmh` | absolute speed ceiling while following | 0 = no absolute ceiling, also for F4; F4 still regulates its front gap relative to rider speed |
-| `foiler_low_speed_kmh` | below this rider speed, Follow-Me holds (won't maneuver around a swimmer) | |
 | `fm_arm_window_s` *(TX)* | how long an arm survives with no throttle | **180 s** |
-| `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM, 2 = RTM, 3 = FM+RTM | needs the Hall sensor |
+| `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
+| `fm_engage_dist_m` | radial F1–F4 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
+| `rtm_target_speed_kmh` | FM_RETURN speed target (historical key) | 0 = 5 km/h; hard maximum 8 km/h |
+| `rtm_approach_zone_m` | FM_RETURN slowdown-band width outside the arrival radius (historical key) | minimum effective width 2 m |
 
 > **Tuning note:** the follow distance is currently set generous (`min_dist_m` + band
 > larger than the final target). Tighten it only after the separation interlock is confirmed
@@ -197,12 +228,12 @@ fault while you're holding the trigger. A stop after you've already let go just 
 
 - **Toggle:** repeat the arm gesture.
 - **Magnet:** hold ~2 s again (one long buzz = off).
-- **Automatic:** arming RTM disarms FM; the arm expires after `fm_arm_window_s` with no
-  throttle; a fault ends it.
+- **Automatic:** the arm expires after `fm_arm_window_s` with no throttle; a fault ends it.
 
-Trigger release is not a disarm after FM has seen throttle. The proof resets automatically if fresh
-positions keep you inside the effective engagement distance and below 2 km/h for 2 seconds. Before
-rigging a new tow, explicit toggle/magnet/F0 disarm remains the deterministic reset.
+Trigger release is not a disarm after FM has seen throttle. Entering `FM_RETURN` and releasing a
+latched min-distance stop clear the separation proof; a normal return exit leaves FM armed and waits
+for a fresh proof. Before rigging a new tow, explicit toggle/magnet/F0 disarm remains the deterministic
+session reset.
 
 ---
 
@@ -225,7 +256,7 @@ hands steering back to FM. This is a direct takeover, not continuous target-angl
 2. Follow-Me only steers and only reduces throttle — never adds.
 3. Releasing the trigger stops the buggy at the hardware level, in every mode.
 4. Manual steering has priority while deliberately deflected; genuine GPS / compass / radio faults still end FM.
-5. Follow-Me and Return-to-Me are mutually exclusive — arming one disarms the other.
+5. FM_RETURN is a guarded Follow-Me state; there is no separate RTM gesture or mode.
 
 *See `BUGGY_FOIL_DOMAIN.md` for the domain model and `DESIGN_FOLLOW_ME.md` for the full
 engineering design.*

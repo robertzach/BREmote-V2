@@ -256,15 +256,15 @@ void sendData(void *parameter)
     // Feature A — per-cycle one-shot slot-jitter (0/33/66ms); 0 = no jitter this cycle.
     uint32_t extra_delay = 0;
 
-    // Feature A req#3 — suspend the backoff while an autonomous mode is active (FM armed or RTM
-    // active). CLAUDE.md §12.4 requires GPS meta-packets >=2Hz during active FM steering, and the
+    // Feature A req#3 — suspend the backoff while FM is armed. GPS meta-packets must remain >=2Hz
+    // during active FM steering, and the
     // every-5th-cycle GPS meta only stays at 2Hz while the cadence is a flat 100ms. Holding
     // base_interval at 100 and applying no jitter here preserves the >=2Hz meta floor (§12 rules
     // 1-4: the collision heuristic must never starve the FM/anti-spoofing data path).
-    // Trade-off: two units both in FM/RTM will not de-sync until the mode disarms — the floor wins.
+    // Trade-off: two units both in FM will not de-sync until the mode disarms — the floor wins.
     // isFmArmed() (accessor) used instead of raw fm_armed: fm_armed lives in RTMState.ino, which
     // Arduino concatenates AFTER Radio.ino, so the raw variable is not yet declared here.
-    bool backoff_allowed = !(isFmArmed() || rtm_tx_active.load(std::memory_order_relaxed));
+    bool backoff_allowed = !isFmArmed();
     if (!backoff_allowed)
     {
       base_interval         = 100;
@@ -400,12 +400,8 @@ void sendData(void *parameter)
         else
         {
           uint8_t thr = calcFinalThrottle();
-          // V2.5-Evo - 2026-06-05 - C-1: 2nd independent gate — hard-zero throttle during the RTM
-          // arm ceremony, regardless of rtm_thr_cap_tx. Both gates must fail to pass throttle while arming.
-          if (rtmIsArming()) thr = 0;
           // V2.5-Evo - 2026-04-25 - P7: cap at 0xF0 (240=94.1%) to reserve 0xF1-0xFF for all meta-packet types.
-          // 0xF1=RTM state, 0xF2=FM override, 0xF3=GPS coord. Was 0xF2 cap before P7.
-          // 0xF1 and 0xF2 are intentionally reserved packet type bytes — do not assign.
+          // 0xF1 remains retired/reserved; 0xF2=FM declaration, 0xF3=GPS coord.
           sendArray[3] = (thr > 0xF0) ? 0xF0 : thr;
           sendArray[4] = steer_scaled;
         }

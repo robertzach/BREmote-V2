@@ -68,44 +68,31 @@ void generatePWM(void *parameter) {
 
 void calcPWM()
 {
-  // V2.5-Evo - 2026-04-25 - P7: Apply RTM overrides before any PWM calculation.
-  // Emergency stop: any safety gate failure forces throttle to neutral regardless of user input.
-  // Steering override: bearing-derived value replaces radio steering when RTM is active.
-  // RTM can only subtract from user throttle (never add). Creator safety philosophy enforced.
-  uint8_t effective_thr   = rtm_rx_emergency_stop ? 0 : thr_received;
-  // Approach decel zone: cap effective_thr when RTM is guiding the buggy into the stop zone.
-  // rtm_approach_cap is 255 (no cap) in manual mode and outside the approach zone.
-  // Only RTMState.ino sets it below 255 — during active RTM when dist < rtm_approach_zone_m.
-  // RTM can only subtract from user throttle, never add — creator safety philosophy enforced.
-  if ((uint8_t)rtm_approach_cap < effective_thr)
-  {
-    effective_thr = rtm_approach_cap;
-  }
+  uint8_t effective_thr = thr_received;
 
   // V2.5-Evo - 2026-07-19 - P3 FM: apply the Follow-Me throttle cap.
-  // Same subtract-only shape as rtm_approach_cap above — lowest cap wins, and the cap can only
+  // Subtract-only: the cap can only
   // ever reduce the rider's throttle, never raise it. fm_throttle_cap is 255 (no cap) whenever FM
-  // is idle or merely armed; runFmLoop() drives it to 0 on any FM fault or geometric hold, and to
-  // the cap-chain result while FM is actively following. Creator safety philosophy enforced: the
+  // is idle or merely armed; runFmLoop() drives it to 0 on a fault, during a powered RETURN proof,
+  // or after the min_dist stop latch trips, and uses the cap-chain result while FM is actively
+  // following. Geometry/front warnings never alter this value. Creator safety philosophy enforced: the
   // human trigger remains the sole throttle source.
   if ((uint8_t)fm_throttle_cap < effective_thr)
   {
     effective_thr = fm_throttle_cap;
   }
 
-  // SAFETY FIX (2026-04-28 audit): also gate on thr_received>=25.
-  // Gate 1 in RTMState.ino resets rtm_steer_override=127 on throttle release (Task 1A),
-  // but that runs at 10Hz. This gate ensures the PWM task (100Hz) cannot apply a stale
-  // bearing value during the up-to-100ms window before Gate 1 next fires.
+  // Also gate on thr_received>=25 so the 100 Hz PWM task cannot apply a stale bearing during
+  // the up-to-100 ms window before the navigation loop next runs.
   // V2.5-Evo - 2026-08-26 - FM manual steering takeover. A deliberate rider input wins immediately
   // in this 100 Hz task, while FM remains ACTIVE in the 10 Hz state machine. This preserves the FM
   // mode, separation latch and subtract-only throttle cap; centring the input seamlessly restores
-  // the latest automatic steering command. RTM deliberately keeps its existing behaviour.
+  // the latest automatic steering command.
   int fm_manual_steer_dev = (int)steering_received - 127;
   if (fm_manual_steer_dev < 0) fm_manual_steer_dev = -fm_manual_steer_dev;
   bool fm_manual_steer = fm_rx_active &&
                          (fm_manual_steer_dev >= (int)kFmManualSteerDeadband);
-  bool automatic_steer = rtm_rx_active || (fm_rx_active && !fm_manual_steer);
+  bool automatic_steer = fm_rx_active && !fm_manual_steer;
 
   // Autonomous steering never reaches the motors on a released trigger. When FM manual takeover
   // is selected, steering_received is used below even though FM remains active in the background.

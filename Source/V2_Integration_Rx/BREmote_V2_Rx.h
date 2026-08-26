@@ -146,7 +146,10 @@ struct confStruct {
     float boogie_vmax_in_followme_kmh; // Maximum boogie speed in follow-me mode (km/h)
     float min_dist_m; // minimum allowed distance to the foiler
     float followme_smoothing_band_m; // smoothing band above min distance
-    float foiler_low_speed_kmh; // low-speed threshold for safety stop (hysteresis)
+    // Retired 2026-08-26: was foiler_low_speed_kmh. Keep this float in place so stored SW35
+    // configurations and field offsets remain binary-compatible; it is intentionally not exposed
+    // by ConfigService and no runtime path reads it.
+    float rsvd_f32_foiler_low_speed;
     // V2.5-Evo - 2026-07-20 - R6: comment block corrected. It previously described an
     // "engagement cone" gate that does not exist, marked all three params "CURRENTLY UNUSED"
     // (the FM geometry consumes all three), and gave the wrong mode numbers with the wrong
@@ -156,14 +159,13 @@ struct confStruct {
     // F1/F3: decides whether the buggy is lined up closely enough BEHIND the rider to apply the
     // diagonal side offset, or whether it should just sit directly behind. Measured from the
     // directly-behind axis; it is not an F1/F3 engagement gate.
-    // F4: reused as the front-cone gate. A front proof can latch/re-engage only below this angle
-    // from the rider's forward course.
+    // F4: reused as the inner front-warning threshold. It does not gate engagement or control.
     // Range: 0-180°. Default 35°.
     float zone_angle_enter_deg;
 
     // FOLLOW-GEOMETRY SCHMITT — EXIT half-angle (degrees). F1/F3 drop the diagonal beyond it;
-    // F4 stops, enters HOLD and clears the front proof beyond it. MUST be > zone_angle_enter_deg
-    // by 5-15° so rider-course noise cannot flap either decision.
+    // F4 raises its front-position warning beyond it but keeps the same steering/cap/state/latch.
+    // MUST be > zone_angle_enter_deg by 5-15° so noise cannot flap either decision.
     // Range: 0-180°. Default 45°.
     float zone_angle_exit_deg;
 
@@ -266,12 +268,12 @@ struct confStruct {
     // First flash of P7 firmware resets all RX settings to defaults.
     // After flashing: re-pair TX/RX, re-enter all settings, re-run runcal.
     // ============================================================
-    float    rtm_vesc_speed_diff_kmh;    // Phase C: max GPS vs VESC speed diff; 5-50 km/h; default 20.0
+    float    rtm_vesc_speed_diff_kmh;    // retired standalone-RTM ABI slot; not read at runtime
     float    vesc_erpm_per_kmh;          // ERPM per km/h (vehicle-specific); default 0.0 (0=skip VESC check)
-    uint16_t rtm_rx_enabled;             // RX-side RTM master enable; 0=off, 1=on; default 1
-    uint16_t rtm_rx_override_steering;   // Allow RTM to override steering; 0=off, 1=on; default 1
-    uint16_t rtm_compass_required;       // Require valid compass for RTM arming; 0=no, 1=yes; default 1
-    uint16_t rtm_stop_distance_m;        // Hard stop radius in metres; RTM stops when within this dist of TX; 1-50; default 10
+    uint16_t rtm_rx_enabled;             // FM/FM_RETURN master enable (historical key name)
+    uint16_t rtm_rx_override_steering;   // FM automatic steering enable (historical key name)
+    uint16_t rtm_compass_required;       // FM_RETURN heading-required gate (historical key name)
+    uint16_t rtm_stop_distance_m;        // retired standalone-RTM ABI slot; not read at runtime
 
     // V2.5-Evo - 2026-04-29 - BUNDLE B: VESC UART TIMEOUT
     // Set to 6s (down from the original hardcoded 20s) to minimise stale VESC data.
@@ -308,7 +310,7 @@ struct confStruct {
     // Throttle cap = thr × (dist − rtm_stop_distance_m) / (rtm_approach_zone_m − rtm_stop_distance_m)
     // Result: full throttle at the outer edge; cap reaches 0 at rtm_stop_distance_m; Gate 9 hard stop still applies.
     // Set to 0 to disable the decel zone and use Gate 9 hard stop only.
-    uint16_t rtm_approach_zone_m;  // 0=disabled, 5-100 m; default 15; outer edge of RTM approach decel zone
+    uint16_t rtm_approach_zone_m;  // FM_RETURN approach-band width; values below 2 use 2 m; default 12
 
     // ============================================================
     // V2.5-Evo - 2026-05-06 - D3: RTM HEADING SOURCE SELECTION
@@ -356,8 +358,8 @@ struct confStruct {
     //
     // sizeof grows 164 → 172. SW_VERSION 31 → 32. First flash resets SPIFFS config.
     // ============================================================
-    float    rtm_target_speed_kmh;      // Phase 2 run speed cap (GPS-based); 0=disabled; 0-20 km/h; default 4.0
-    uint16_t rtm_align_threshold_deg;   // Phase 1→2 transition: heading error below which run phase begins; 10-90°; default 45
+    float    rtm_target_speed_kmh;      // FM_RETURN speed; 0=>5 km/h fallback; hard cap 8; default 4
+    uint16_t rtm_align_threshold_deg;   // FM_RETURN align threshold; 10-90°; default 45
 
     // V2.5-Evo - 2026-06-05 - SW33: MOTOR RAMPING (seconds). Time for a motor output to rise
     // 0->full. Applied to BOTH motor channels — smooths the throttle AND prevents a single motor
@@ -529,7 +531,7 @@ static_assert(sizeof(confStruct) == 192, "confStruct size mismatch — expected 
 confStruct usrConf;
   //The orginal confs were:  ##// confStruct defaultConf = {SW_VERSION, 1, 0, 0, 50, 0, 0, 1500, 2000, 1500, 2000, 1000, 10, 0, 1, 0, 0, 0, 0, 0, 25.0f, 10.0f, 10.0f, 5.0f, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0, 1000, 1, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}};
   // Factory default configuration.
-confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: conventional default (0-100)*/, 0 /*steering_inverted: 0 = conventional default; a fresh build MUST verify steering direction wheels-up (FM steers toward rider) before trusting FM.*/, 0, 1000, 2000, 1000, 2000, 1000, 10, 0, 1, 2, 2, 1, 2, 1, 25.0f, 10.0f, 10.0f, 8.0f, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0f, 3000, 0, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}, // wifi_password below: documented DEFAULT AP password "12345678" — change before use
+confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: conventional default (0-100)*/, 0 /*steering_inverted: 0 = conventional default; a fresh build MUST verify steering direction wheels-up (FM steers toward rider) before trusting FM.*/, 0, 1000, 2000, 1000, 2000, 1000, 10, 0, 1, 2, 2, 1, 2, 1, 25.0f, 10.0f, 10.0f, 8.0f /*retired foiler-low-speed slot; reserved for SW35 ABI*/, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0f, 3000, 0, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}, // wifi_password below: documented DEFAULT AP password "12345678" — change before use
   // V2.5-Evo - 2026-04-22 - Compass calibration fields (previously implicit zeros).
   // Made explicit here so gps_chip_type can follow. Safe neutral values:
   // offsets=0 (no bias), scales=1.0f (unity gain = no correction applied).
@@ -744,10 +746,9 @@ double        rx_tx_gps_lat       = 0.0;  // TX latitude (degrees, WGS84)
 double        rx_tx_gps_lng       = 0.0;  // TX longitude (degrees, WGS84)
 unsigned long rx_tx_gps_timestamp = 0;    // millis() when last meta-packet received; 0 = never
 
-// V2.5-Evo - 2026-04-25 - P7 RTM/FM runtime state (set by Radio.ino meta-packet handlers)
-// rtm_rx_active: true = TX signalled RTM active; safety gates in RTMState.ino may override.
-// rtm_rx_emergency_stop: true = safety gate failed; calcPWM() forces throttle to 0.
-// rtm_steer_override: bearing-derived steering value (0-255, 127=straight ahead).
+// FM runtime state. Historical rtm_* names remain on shared controller/diagnostic storage so the
+// packet/log/config ABI does not change; standalone RTM has no activation or PWM path.
+// rtm_steer_override: shared FM bearing-derived steering value (0-255, 127=straight ahead).
 // fm_mode_runtime: TX-side FM mode declaration (0-4); 0xFF = no declaration this session.
 // V2.5-Evo - 2026-04-25 - P7 fix: use std::atomic for safe access across FreeRTOS task
 // preemption. generatePWM (task) and RTMState.ino loop() both run on the single-core
@@ -769,15 +770,10 @@ std::atomic<unsigned long> fm_mode_last_rx_ms {0};
 std::atomic<uint8_t> rtm_approach_cap      {255};  // V2.5-Evo - 2026-04-30 - approach decel cap (0-255); 255=no cap; computed by RTMState.ino during active RTM; applied by calcPWM()
 
 // V2.5-Evo - 2026-07-19 - P3 Follow-Me (FM) autonomous-following runtime flags.
-// fm_rx_active : true while FM is actively steering. Gates the steering override in calcPWM()
-//                using the SAME pattern as rtm_rx_active (RTM and FM are mutually exclusive, so
-//                they safely share rtm_steer_override as the steering command).
+// fm_rx_active : true while FM or FM_RETURN is actively steering. Gates the override in calcPWM().
 // fm_throttle_cap : FM's own subtract-only throttle cap (0-255; 255 = no cap). Applied in calcPWM()
-//                alongside rtm_approach_cap (lowest cap wins). Deliberately a SEPARATE global from
-//                rtm_approach_cap so RTM's per-tick housekeeping (which rewrites rtm_approach_cap=255
-//                whenever RTM is inactive) can never transiently clear an FM cap in the window between
-//                runRtmLoop() and runFmLoop() on the single-core ESP32-C3. seq_cst, same as the RTM
-//                atomics — an indivisible read/write the 100Hz generatePWM task cannot tear.
+//                as the only autonomous throttle cap. seq_cst makes it indivisible to the 100 Hz
+//                generatePWM task.
 std::atomic<bool>    fm_rx_active     {false};
 std::atomic<uint8_t> fm_throttle_cap  {255};
 
@@ -1175,6 +1171,14 @@ inline void webCfgNotifyRxConnected() {}  // No-op stub when WiFi disabled
 // V2.5-Evo - 2026-05-16 - feat(telemetry): expand LoRa packet 8→19 bytes + 0xF4 aux meta-packet
 //Telemetry to send, MUST BE 8-bit!!
 // V2.5-Evo - 2026-04-27 - P8: rtm_distance at index 5; encoding: 0-99=tenths of m, 100-254=(value-90) whole m, 255=N/A.
+#define FM_FLAG_ARMED        0x01
+#define FM_FLAG_ENGAGED      0x02
+#define FM_FLAG_NOTREADY     0x04
+#define FM_FLAG_FAULT        0x08
+#define FM_FLAG_RETURN       0x10
+#define FM_FLAG_DONE         0x20  // reserved: legacy RETURN->IDLE completion bit; current RX does not emit
+#define FM_FLAG_GEOMETRY     0x40  // radial/separation geometry warning only; no control effect
+#define FM_FLAG_FRONT_LOST   0x80  // F4 front-position warning only; no control effect
 struct __attribute__((packed)) TelemetryPacket {
     uint8_t foil_bat = 0xFF;          // index 0 — battery % 0-100
     uint8_t foil_temp = 0xFF;         // index 1 — FET temp degC
@@ -1192,7 +1196,8 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t rx_heading = 0xFF;        // index 13 — GPS COG÷2 (0-179→0-358°); 0xFF = N/A
     uint8_t fm_heading_err = 127;     // index 14 — bearing error+127; 127 = no data
     uint8_t fm_status = 0;            // index 15 — [7]=aux2_on [6]=aux1_on [5]=vesc_online [4]=rx_wetness [3:2]=heading_conf [1]=rtm_active [0]=fm_active
-    uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state (assembled in RTMState.ino runRtmLoop): [3]=fault-stop-sticky [2]=armed-not-ready [1]=engaged [0]=armed. Was reserved_tx_imu (unused reserved byte).
+    uint8_t fm_flags = 0;             // index 16 — FM state: [7]=F4-front warning [6]=geometry warning
+                                      // [5]=legacy done/reserved [4]=return [3]=fault [2]=not-ready [1]=driving [0]=armed
     uint8_t rx_bearing_to_tx = 0xFF;  // index 17 — bearing from buggy toward rider÷2; 0xFF = N/A
     uint8_t link_quality = 0;         // index 18 (must be last)
 } telemetry;

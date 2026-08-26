@@ -4,11 +4,11 @@
 
 [![Original by LudwigBre](https://img.shields.io/badge/Original%20HW%20%26%20FW-LudwigBre%20%2F%20Luddi96-blue)](https://github.com/Luddi96/BREmote)
 [![Web Console by Janrusher](https://img.shields.io/badge/Web%20Console%20%26%20Dynamic%20Throttle-Janrusher-green)](https://github.com/Janrusher)
-[![V2.5-Evo by monterman](https://img.shields.io/badge/V2.5--Evo%20GPS%20%2F%20RTM%20%2F%20Web%20Console-monterman-orange)](https://github.com/monterman)
+[![V2.5-Evo by monterman](https://img.shields.io/badge/V2.5--Evo%20GPS%20%2F%20FM%20%2F%20Web%20Console-monterman-orange)](https://github.com/monterman)
 
 ESP32 LoRa wireless remote for efoil and RC tow buggy — 868/915 MHz, 10 Hz control cycle, VESC UART telemetry, GPS speed display, integrated data logger.
 
-**Status: Alpha — BLE + VESC Tool field-confirmed ✅ (2026-05-16). RTM encoded + working, FM coded.**
+**Status: Alpha — BLE + VESC Tool field-confirmed ✅ (2026-05-16). Follow-Me including FM_RETURN implemented; water validation pending.**
 
 > **⚠️ 2026-07-25 — important fix, please reflash both boards.** A bug was found in on-water testing: the shared serial line was prioritising the VESC over the GPS, so the receiver was catching only ~2% of the GPS feed and Follow-Me could steer on a dead heading. Priority is now swapped and the GPS course works. **Fixed but not yet proven on the water** — see [CHANGELOG.md](CHANGELOG.md). Read the Alpha Testing Notes below before any in-water use.**
 
@@ -48,7 +48,7 @@ Every section of this README has a longer document behind it. Start here when yo
 | Chase compass EMI / understand the field data | [Compass calibration & EMI field analysis](docs/Compass_Cal_Analysis.md) *(reference, not a how-to)* |
 | Read the TX screen | [Display reference](docs/display-reference.md) |
 | Ride with Follow-Me | [Follow-Me guide](docs/FOLLOW_ME_GUIDE.md) · [design notes](DESIGN_FOLLOW_ME.md) |
-| Use Return-to-Me | [RTM design notes](DESIGN_RETURN_TO_ME.md) |
+| Bring the buggy back after stopping | [Follow-Me guide — FM_RETURN](docs/FOLLOW_ME_GUIDE.md#fm_return--return-after-you-stop) |
 | Set up or tune the VESCs | [Smooth-start quick reference](docs/VESC_SMOOTH_START_QUICK_REFERENCE.md) · [tuning process](docs/VESC_TUNING_PROCESS.md) · [FOC notes](docs/VESC_FOC_TUNING_NOTES.md) |
 | Fix VESC telemetry | [VESC telemetry fix](docs/VESC_Telemetry_Fix.md) · [telemetry sources & prop baseline](docs/TELEMETRY_SOURCE_AND_PROP_BASELINE.md) |
 | Use Bluetooth / BLE | [BLE implementation](docs/BLE_Implementation.md) · [app brief](docs/BLE_App_Brief.md) |
@@ -134,11 +134,11 @@ BREmote is a custom wireless remote system for efoils and RC tow buggies. The TX
 | Full codebase audit + stability fixes (7 critical) | ❌ | ✅ |
 | GPS anti-spoofing: Phase A (RX standalone) | ❌ | ✅ |
 | GPS anti-spoofing: Phase B (TX↔RX handshake) | ❌ | ✅ |
-| GPS anti-spoofing: Phase C (RTM convergence) | ❌ | ✅ |
+| GPS anti-spoofing: FM_RETURN convergence | ❌ | ✅ |
 | TX→RX GPS coordinate meta-packets (0xF3) | ❌ | ✅ |
-| Return-to-Me mode (RTM) | ❌ | ✅ |
+| FM_RETURN state (direct return after rider stops) | ❌ | ✅ |
 | Follow-Me mode override (FM) | ❌ | ✅ |
-| RTM/FM info display (distance/speed on TX) | ❌ | ✅ |
+| Follow-Me/FM_RETURN info display | ❌ | ✅ |
 | BLE live telemetry — VESC Tool / VESC App (iOS/Android, free) | ❌ | ✅ |
 | NUS + VESC binary protocol (COMM_GET_VALUES, auto-detected) | ❌ | ✅ |
 | Gauges: FET temp, motor amps, duty, voltage, RPM | ❌ | ✅ |
@@ -406,7 +406,7 @@ Unavailable modes (no VESC lock or no GPS fix) are skipped automatically. `MA` r
 | Boot + THR + RIGHT toggle | Delete SPIFFS config (factory reset) |
 | LEFT hold 2 s | Lock the Remote |
 | RIGHT hold 2 s | Cycle telemetry display mode |
-| RIGHT tap → LEFT hold (default 5 s, tunable 3–10 s) | Arm **Return-to-Me** (RTM) — display shows `rn` |
+| RIGHT tap → LEFT hold | No autonomous action (former RTM gesture retired) |
 | LEFT tap → RIGHT hold (default 3 s, tunable 3–10 s) | Cycle **Follow-Me** override mode (F0/F1/F2/F3/F4) |
 
 > 💡 **Optional — magnet / Hall input for hands-free control.** A DRV5032 Hall sensor on GPIO 9 (P_MAG) lets a magnet gesture activate **BLE** and arm **Follow-Me** without reaching for the toggles (great mid-ride). Wiring + firmware: **[Hall Sensor Expansion guide →](docs/Hall_Sensor_Expansion.md)** · step-by-step fitting (incl. easier-to-solder parts): **[install tutorial →](docs/Hall_Sensor_Install_Tutorial.md)**.
@@ -427,7 +427,7 @@ Unavailable modes (no VESC lock or no GPS fix) are skipped automatically. `MA` r
 - Foil battery cell count and voltage monitoring
 - BMS detection
 - GPS positioning (BN-880 or HGLRC M100-5883)
-- Compass (I2C, fully calibrated) — **either a QMC5883L at `0x0D` (BN-880) or a QMC5883P at `0x2C` (HGLRC M100-5883), detected automatically at boot and driven by the matching driver**; one firmware image, nothing to set. RTM uses GPS COG as primary heading, compass snapshot as low-speed fallback; pure compass mode available as diagnostic option (`rtm_use_compass=2`)
+- Compass (I2C, fully calibrated) — **either a QMC5883L at `0x0D` (BN-880) or a QMC5883P at `0x2C` (HGLRC M100-5883), detected automatically at boot and driven by the matching driver**; one firmware image, nothing to set. FM/FM_RETURN uses GPS COG as primary heading and a compass snapshot as low-speed fallback; pure compass mode remains diagnostic only (`rtm_use_compass=2`, historical key)
 - Kalman filter on GPS data
 - Follow-me mode framework (positional modes: behind, near right, near left)
 - WiFi AP for web configuration and log management
@@ -474,115 +474,31 @@ This rule is non-negotiable and is enforced at the firmware level — it cannot 
 - Autonomous assist modes can **only subtract from throttle** — they can never add to it
 - Releasing the throttle trigger stops the buggy **immediately**, regardless of any active mode
 - No loiter, no station-keeping, no position hold, no autonomous parking
-- Return-to-Me and Follow-Me can adjust steering and reduce throttle — they cannot independently spin the motor
+- Follow-Me, including FM_RETURN, can adjust steering and reduce throttle — it cannot independently spin the motor
 - Without active user throttle input, the buggy motor **never moves** under any circumstance
 
 ---
 
-## Return-to-Me (RTM) — Full Guide
+## FM_RETURN — Return after stopping
 
-> 📖 Design and rationale: [DESIGN_RETURN_TO_ME.md](DESIGN_RETURN_TO_ME.md). Setup in order: [Zero → Foiling](docs/ZERO_TO_FOILING.md).
+The former standalone Return-to-Me mode, gesture, TX state machine and 0xF1 control path are
+retired. Return is now a state inside Follow-Me and uses the same declaration, fault gates,
+steering controller and effective `fm_engage_dist_m`.
 
-> RTM is fully implemented in V2.5-Evo. Hardware: GPS on both TX and RX, compass on RX.
+When the rider remains below 2 km/h for 2 seconds while the buggy is outside that radius,
+Follow-Me enters `FM_RETURN`. This can happen after normal following or directly after arming
+while stationary. The buggy remains stopped during the proof and then aims directly at the
+rider. It moves only while the trigger is held; release pauses the return, and deliberate
+steering temporarily takes priority.
 
-> **Display note:** The TX dot matrix shows lowercase **`rn`** while Return-to-Me is active. `rn` = Return to Me = RTM. All SPIFFS parameters and code use the `rtm_` prefix — RTM is the canonical name for this mode.
-
-For when you are in the water and want the buggy to drive itself toward you. **You must actively hold the throttle** — RTM provides automatic GPS+compass-bearing steering only; it cannot drive the motor independently. Releasing the trigger stops the buggy immediately.
-
-### Arming
-
-1. **Combo gesture:** Quick-tap RIGHT toggle, then within 3 seconds hold LEFT toggle for the arm-hold duration (`rtm_hold_duration_s`, default 5 s, tunable 3–10 s)
-2. TX display shows `rn` for 3 s (two 1.5 s static passes) — armed
-3. Haptic: 2 fast short pulses confirm arm
-
-### Engaging
-
-With RTM armed, press throttle to engage (10-second arm window):
-- **Single-squeeze mode** (`rtm_double_squeeze_en = 0`): hold throttle >30% for 500 ms
-- **Double-squeeze mode** (`rtm_double_squeeze_en = 1`, default): squeeze, release, squeeze again
-
-### Active Operation
-
-- Throttle ramps from `rtm_throttle_start_pct` (default 30%) to `rtm_throttle_max_pct` (default 70%) over `rtm_ramp_duration_s` seconds
-- TX display shows distance to TX (in metres) or speed, per `rtm_display_mode`
-- RX auto-steers toward TX GPS position — **heading source is GPS COG (primary) + compass snapshot (fallback at low speed)**. See heading modes below.
-- Distance-to-TX shown in tenths of metre below 10 m (e.g. `3.5`), whole metres above
-
-#### Heading Source — `rtm_use_compass` SPIFFS field (RX)
-
-The compass was removed as primary steering source due to motor EMF biasing the QMC5883L by 100°+ under throttle. Steering now uses a layered heading strategy:
-
-| `rtm_use_compass` | Mode | Behavior |
-|---|---|---|
-| `0` | GPS COG only | Uses GPS course-over-ground exclusively. Safest for all EMI builds. Requires minimum speed (`rtm_cog_min_speed_kmh`) to produce a valid bearing. |
-| `1` *(default)* | Hybrid | GPS COG primary above min speed. Falls back to compass snapshot when buggy is too slow for GPS COG to be reliable. Snapshot is captured automatically every ~100 ms **only when motor is idle** (no throttle), so it is always an EMI-free reading. |
-| `2` | Compass only | Diagnostic use only. Do not use on water with EMI-affected hardware. |
-
-The compass snapshot is taken continuously by `updateCompassSnapshot()` whenever `thr_received < 25` — no user action required. As soon as throttle engages, GPS COG + PD control takes over.
-
-### Disengaging
-
-RTM stops automatically when **any** of these conditions occur:
-
-| Safety Gate | Condition |
-|---|---|
-| Throttle release | User releases trigger → buggy stops (Gate 1, unconfigurable) |
-| Hard stop distance | Buggy within `rtm_stop_distance_m` of TX (**default 10 m**) |
-| GPS lost — TX | TX GPS older than `rtm_gps_timeout_ms` (default 2000 ms) |
-| GPS lost — RX | RX GPS older than 6 s |
-| GPS rejected | Phase A anti-spoofing failure on RX |
-| Handshake failed | Phase B TX↔RX position cross-check failed |
-| Throttle idle 10 s | No throttle input for 10 consecutive seconds while active |
-| LoRa link lost | No packet for failsafe timeout |
-| Max runtime | If `rtm_max_runtime_s > 0` (default: 0 = disabled) |
-| Convergence fail | Distance to TX not decreasing (Phase C, checked every 5 s) |
-| Steering input | Steering override while `rtm_steer_exit_on_input = 1` (default) |
-
-On any gate failure: throttle → 0, TX display shows `St` for 2 s, haptic confirms disarm.
-
-### SPIFFS Configuration (TX)
-
-<details>
-<summary><strong>Click to expand: RTM TX SPIFFS parameters (12 fields)</strong></summary>
-
-<br>
-
-| Parameter | Default | Description |
-|---|---|---|
-| `rtm_enabled` | 1 | Master on/off switch |
-| `rtm_hold_duration_s` | 5 | LEFT-hold duration to arm RTM, in seconds (4–10) |
-| `rtm_throttle_start_pct` | 30 | Initial throttle cap % when RTM engages |
-| `rtm_throttle_max_pct` | 70 | Max throttle cap % after ramp |
-| `rtm_ramp_duration_s` | 5 | Ramp time start→max in seconds |
-| `rtm_arm_window_s` | 10 | Seconds to engage throttle after arming |
-| `rtm_double_squeeze_en` | 1 | 1=double-squeeze, 0=hold 500ms |
-| `rtm_disengage_distance_m` | 10 | TX-side disengage distance in metres |
-| `rtm_gps_timeout_ms` | 2000 | TX GPS stale timeout in ms |
-| `rtm_max_runtime_s` | 0 | Max runtime (0 = disabled) |
-| `rtm_display_mode` | 0 | 0=distance, 1=speed, 2=alternating |
-| `rtm_steer_exit_on_input` | 1 | 1=steering exits RTM, 0=correction blend |
-
-</details>
-
-### SPIFFS Configuration (RX)
-
-<details>
-<summary><strong>Click to expand: RTM RX SPIFFS parameters (8 fields)</strong></summary>
-
-<br>
-
-| Parameter | Default | Description |
-|---|---|---|
-| `rtm_rx_enabled` | 1 | RX-side RTM enable |
-| `rtm_rx_override_steering` | 1 | Allow RX to auto-steer (0=disable steering override) |
-| `rtm_compass_required` | 1 | Require at least one valid heading source before RTM runs; 0=bypass (advanced only) |
-| `rtm_use_compass` | 1 | Heading source mode: 0=GPS COG only, 1=Hybrid GPS+snapshot (default), 2=Compass only (diagnostic) |
-| `rtm_cog_min_speed_kmh` | 3 | Minimum speed (km/h) for GPS COG to be considered reliable. Below this, falls back to compass snapshot. |
-| `rtm_stop_distance_m` | **10** | RX-side hard stop distance — do not go below 10; under ~10 m is inside GPS error |
-| `rtm_vesc_speed_diff_kmh` | 20 | Max VESC vs GPS speed diff (Phase C) |
-| `vesc_erpm_per_kmh` | 0 | VESC ERPM per km/h for speed check (0=disabled) |
-
-</details>
+On arrival at `distance < effective fm_engage_dist_m`, the RX stops first, clears the separation
+latch and enters `FM_ARMED`. The TX stays armed and keeps the selected F1–F4 declaration alive;
+automatic Follow-Me cannot resume until a fresh 2-second radial proof above the engagement distance.
+If the trigger is still held, cap 0 remains until it is released once; otherwise manual cap 255 is
+available immediately. Sustained rider motion also cancels return to `FM_ARMED`, never directly to
+`FM_ACTIVE`. The TX shows `rE` only while return is active. The historical RX config keys
+`rtm_target_speed_kmh`, `rtm_align_threshold_deg`, and `rtm_approach_zone_m` tune the return
+controller; their names are retained only for stored-config compatibility.
 
 ---
 
@@ -592,7 +508,7 @@ On any gate failure: throttle → 0, TX display shows `St` for 2 s, haptic confi
 
 > FM override is fully implemented in V2.5-Evo. It overrides the RX follow-me positioning mode at runtime without a SPIFFS write.
 
-> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0 / F1 / F2 / F3 / F4) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4 is an experimental forward pacer: it never overtakes autonomously and engages only after the buggy is already proven ahead. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
+> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0 / F1 / F2 / F3 / F4) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4 is an experimental forward pacer. Its activation gate is now radial like F1–F3, so it may autonomously travel from behind toward the forward target. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
 
 The override is RAM-only — RX returns to its web-configured `followme_mode` on reboot.
 
@@ -611,22 +527,23 @@ The override is RAM-only — RX returns to its web-configured `followme_mode` on
 | `F1` | 1 | Near-Right — RX trails behind-right of the rider |
 | `F2` | 2 | Behind (default) — RX trails directly behind the rider |
 | `F3` | 3 | Near-Left — RX trails behind-left of the rider |
-| `F4` | 4 | In Front — RX acts as a forward pacer; it engages only after it is already ahead of the rider |
+| `F4` | 4 | In Front — RX acts as a forward pacer; radial engagement is identical to F1–F3 |
 
-For F4, `fm_engage_dist_m` is measured **along the rider's forward course**, not merely as radial
-distance. The buggy must remain inside the `zone_angle_enter_deg` front cone for 2 seconds. Losing
-the front position or crossing `zone_angle_exit_deg` stops F4 in HOLD, clears the latch and requires
-a fresh front proof. `boogie_vmax_in_followme_kmh=0` is allowed and removes the absolute vehicle-
-speed ceiling; F4's rider-relative front-gap governor remains active.
+For every F1–F4 mode, `fm_engage_dist_m` is a **radial** boundary and must remain exceeded for
+2 seconds. F4's signed lead and `zone_angle_enter_deg`/`zone_angle_exit_deg` cone now drive only the
+periodic warning: losing the front position does not change steering, cap, state or separation proof.
+This also means F4 no longer has a no-autonomous-overtake guarantee. `boogie_vmax_in_followme_kmh=0`
+is allowed and removes the absolute vehicle-speed ceiling; its rider-relative gap governor remains.
 
 While FM is following, a deliberate manual steering input temporarily takes steering priority
 without cancelling FM; the FM throttle cap and separation proof remain active, and centring the
-steering input returns control to FM. Releasing the trigger still stops the motor immediately, but
-now leaves FM armed in HOLD. Trigger release alone does not clear its separation proof; the proof is
-cleared only when fresh positions show the rider inside the effective engagement distance and below
-2 km/h continuously for 2 seconds. Squeezing again resumes FM when its geometry, sensor gates and
-latch are valid. Explicit F0/disarm remains the deterministic boundary before a new tow. Genuine
-faults and F4's physical loss of the front corridor keep their existing stop behavior.
+steering input returns control to FM. Releasing the trigger still stops the motor immediately and
+leaves the lifecycle in `FM_ACTIVE`; an ordinary release does not even rewrite the cap because input
+throttle is already zero. Geometry/front loss produces one medium vibration immediately and every
+3 seconds, including with the trigger released, but has no control effect. If an ACTIVE buggy reaches
+`min_dist_m`, cap 0 latches until release. That release restores manual cap 255 and clears the
+separation proof; automatic FM can resume only after another radial `>D_engage` 2-second proof.
+Explicit F0/disarm remains the deterministic boundary; genuine sensor/link faults still end the run.
 
 ### FM Proximity Warning
 
@@ -638,9 +555,10 @@ If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires 
 
 `fm_engage_dist_m` (RX web UI: **Follow-Me → FM Engage Distance**) is how far you have to get from the buggy before Follow-Me is allowed to engage for the first time. It is the tow-rope interlock: it exists so FM can never take over while you are still on the rope.
 
-The same effective engagement distance is also the latch-reset radius: once the rider is back inside
-it and the filtered rider speed remains below 2 km/h for 2 seconds, the separation latch is cleared.
-With `fm_engage_dist_m=0`, both SET and RESET use the automatic value including the 8 m floor.
+The same effective distance is the one radial activation boundary for every F1–F4 mode. An ordinary
+trigger release preserves a valid proof. If FM stopped at `min_dist_m`, releasing that stop clears the
+proof, and automatic FM must again remain outside this distance for 2 seconds. With
+`fm_engage_dist_m=0`, the automatic value includes the 8 m floor.
 
 **Measure your own tow rope, then set this to at least one metre more than the rope length.** Example: a 20 ft (6.1 m) rope → set **8 m or more**. A longer rope needs a bigger number.
 
@@ -684,13 +602,14 @@ With `fm_engage_dist_m=0`, both SET and RESET use the automatic value including 
 | `EHFP` | LoRa parameter error |
 | `ECH` | Charger error |
 | `E 7` | Water ingress detected — blinking full-screen alert + 5 long vibrations; motor output **not** cut (see below) |
-| `rn` | Return-to-Me (RTM) mode active |
 | `F0` | Follow-Me override: disabled |
 | `F1` | Follow-Me override: Near-Right |
 | `F2` | Follow-Me override: Behind (default) |
 | `F3` | Follow-Me override: Near-Left |
 | `F4` | Follow-Me override: In Front (forward pacer) |
-| `St` | Stop — RTM or FM safety gate triggered, or arming blocked |
+| `rE` | FM_RETURN active; blinking full R5 bar |
+| `Id` | Legacy RX only: old FM_RETURN completion entered idle/disarmed |
+| `St` | Stop — Follow-Me safety gate triggered, or arming blocked |
 | `99` | Full throttle reached (100%) |
 
 ### RX
@@ -748,7 +667,7 @@ Visible only when `gps_en = 1`. Located at the top-right corner of the digit are
 
 | State | Meaning |
 |---|---|
-| Solid | **FM-grade fix** — RTM and Follow-Me ready |
+| Solid | **FM-grade fix** — Follow-Me and FM_RETURN ready |
 | Slow blink (1 s) | Acquiring fix — not yet good enough to steer on |
 | Fast blink (250 ms) | GPS rejected — spoofing check failed or signal too poor |
 | Off | GPS disabled (`gps_en = 0`) |
@@ -794,13 +713,8 @@ Once BLE is active, open **VESC Tool** (iOS or Android, free), scan for `BRemote
 
 ### R5 Proximity Bar
 
-Row R5 (just below the digit area, C0–C9) is a proximity indicator during RTM or FM. Blinks 1 s on / 500 ms off.
-
-**RTM bar** — shrinks right-to-left as the buggy approaches:
-
-![RTM Proximity Bar](docs/rtm_bar_animation.gif)
-
-Full bar (10 pixels) = buggy at arm distance. Shrinks from the right as the buggy closes in. Gone at stop distance just before RTM disengages.
+Row R5 (just below the digit area, C0–C9) is a Follow-Me proximity indicator. During
+FM_RETURN it blinks as a full-width bar; during normal following it shows the distance error.
 
 **FM bar** — expands outward from center sweet spot:
 
@@ -875,24 +789,24 @@ Full bar (10 pixels) = buggy at arm distance. Shrinks from the right as the bugg
 
 > 📖 Reporting a problem? Use the [Beta testing sheet](docs/Beta_Testing_Sheet.md) so the report is actionable.
 
-BREmote V2.5-Evo is in Alpha. The firmware compiles, has been water tested for control flow and safety gates, and includes anti-spoofing and RTM/FM features. Currently running more water tests to graduate to Beta release.  If you are an alpha tester building on this fork, the project recommends:
+BREmote V2.5-Evo is in Alpha. The firmware compiles, has been water tested for control flow and safety gates, and includes anti-spoofing and Follow-Me/FM_RETURN features. Currently running more water tests to graduate to Beta release. If you are an alpha tester building on this fork, the project recommends:
 
 - Test in a controlled environment (shallow water, short range, motors disconnected for first dry run, second run with motors on a leashed test stand) before any open-water use.
-- Until the compass EMI behavior on your specific hardware is characterized, treat RTM steering as advisory, not autonomous. Keep `rtm_steer_exit_on_input = 1` enabled (any sideways toggle disengages RTM immediately and returns full manual control).
-- Manual control must always work even if RTM, FM, GPS, or compass fail. Do not rely on autonomous features as the primary safety path.
-- Releasing the throttle trigger always stops the motor — this is the failsafe, and it works regardless of what RTM, FM, or telemetry are doing.
+- Until the compass EMI behavior on your specific hardware is characterized, treat FM steering as unvalidated. Verify the heading source and steering sign before water tests.
+- Manual control must always work even if FM, GPS, or compass fail. Do not rely on autonomous features as the primary safety path.
+- Releasing the throttle trigger always stops the motor — this is the failsafe, and it works regardless of what FM or telemetry are doing.
 
 Anyone field-testing this fork should treat each session as data-gathering, not as production use.
 
 ### Logging for Tuning
 
-The data logger is the primary tool for validating and tuning the RTM/FM steering controller during early field sessions. The controller ships with five preset values (Very Soft → Very Sharp) that have been chosen analytically; **empirical validation against your specific hardware and water conditions is required** before trusting any preset on the water. A separate steering-tuning guide and a log-analysis web tool are planned for a later development phase. For now, raw CSV logs viewed in any spreadsheet or plotted with Python / gnuplot will surface the patterns that matter.
+The data logger is the primary tool for validating and tuning the FM/FM_RETURN steering controller during early field sessions. The controller ships with five preset values (Very Soft → Very Sharp) that have been chosen analytically; **empirical validation against your specific hardware and water conditions is required** before trusting any preset on the water. A separate steering-tuning guide and a log-analysis web tool are planned for a later development phase. For now, raw CSV logs viewed in any spreadsheet or plotted with Python / gnuplot will surface the patterns that matter.
 
 **How to record a session (briefly — full details in the Data Logger section above):**
 
 - Power on, wait for GPS lock (entries without fix record zero coordinates).
 - Press the AUX button once → green LED flashes 5× → logging starts.
-- Run your test (RTM walk, FM run, manual ride).
+- Run your test (FM_RETURN walk, FM run, manual ride).
 - Press AUX again → green LED flashes 2× → logging stops.
 - Pull the file via the embedded WebUI Logs panel or via `?download <filename>` over serial.
 
@@ -914,10 +828,10 @@ The data logger is the primary tool for validating and tuning the RTM/FM steerin
 | `timestamp_ms` | Time since boot (ms) | X-axis for any plot |
 | `speed_kmh` | RX GPS speed (km/h) | Confirms whether buggy is moving fast enough for GPS COG to be primary heading source |
 | `latitude` / `longitude` | RX position | Plot the actual path; visual sanity-check |
-| `thr_received` | Final throttle command (0–254) | What the user requested vs what RTM allowed |
+| `thr_received` | Final throttle command (0–254) | What the user requested vs what FM allowed |
 | `rtm_source` | Heading source picked: 0=GPS COG, 1=GPS COG fresh, 2=compass snapshot, 3=no data | Confirms layered logic chose the right source at each moment |
 | `rtm_confidence` | 3=HIGH, 2=MED, 1=LOW, 0=none | Modifier on steering authority |
-| `rtm_rx_active` | 1 = RTM engaged, 0 = idle | Mark when RTM is actually doing work |
+| `rtm_rx_active` | Retired compatibility column; always 0 | Preserves the historical CSV schema |
 | `rtm_steer_override` | Final steering output (127 = straight) | What the buggy was told to do |
 | `rtm_heading_chosen_dx10` | Heading used for steering (0.1° units) | What the controller used as "current heading" |
 | `gps_course_dx10` | Raw GPS COG (0.1° units) | Independent reference for direction-of-travel |
@@ -927,7 +841,7 @@ The data logger is the primary tool for validating and tuning the RTM/FM steerin
 | **`d_error_dx10`** | Rate-of-change of heading error (0.1°/sec) | **Kd tuning signal — high during settling = need more damping** |
 | `motor_current_A`, `voltage_V`, `ERPM` | VESC telemetry | Power/load context; correlates compass EMI with current draw |
 
-The two **bold** columns (`heading_error_dx10`, `d_error_dx10`) were added specifically to make steering tuning data-driven. Plot them over time during an RTM/FM run: sustained ±20–50° wobble at 1–3 Hz means the buggy is snaking and the active preset has too little damping; smooth curves trending to zero mean the controller is working.
+The two **bold** columns (`heading_error_dx10`, `d_error_dx10`) were added specifically to make steering tuning data-driven. Plot them over time during an FM/FM_RETURN run: sustained ±20–50° wobble at 1–3 Hz means the buggy is snaking and the active preset has too little damping; smooth curves trending to zero mean the controller is working.
 
 </details>
 

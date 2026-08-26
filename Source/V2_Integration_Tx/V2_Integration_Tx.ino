@@ -50,19 +50,14 @@ void initTxGPS();
 void getTxGPSLoop();
 // V2.5-Evo - 2026-07-20 - canonical "trustworthy fix" gate; shared by getTxGPSLoop() publish path and the Display.ino GPS status dot.
 bool txGpsGoodFix();
-// RTM & FM State Machine Functions (defined in RTMState.ino)
-void runRtmLoop();
+// Follow-Me state machine (FM_RETURN now provides direct return; standalone RTM is retired)
 void runFmLoop();
-void setRtmArmed();
 void cycleFmMode();
 void cycleFmModeArmed();
 bool isFmArmed();
 // V2.5-Evo - 2026-07-20 - Batch T: FM readiness helpers (defined in RTMState.ino, called from Display.ino).
 bool fmArmedNotReady();     // true when FM is armed but not READY → scanner blinks in place instead of sweeping
 bool fmFundamentalReject(); // true when a fresh FM arm must be refused (unpaired / no packet ever / no GPS fix ever)
-uint8_t calcRtmThrottleCap();
-// RTM/FM Active Display (defined in Display.ino)
-void renderRtmInfoDisplay();
 // BLE Functions (defined in BLE.ino)
 // V2.5-Evo - 2026-06-04 - Guarded by BLE_ENABLED (BREmote_V2_Tx.h). When undefined, the
 // NimBLE header is excluded, so these decls (one uses NimBLEServer*) must be excluded too.
@@ -188,9 +183,7 @@ void loop()
   runMenu();
   if(in_menu > 0) in_menu--;
 
-  // V2.5-Evo - 2026-04-25 - P7: RTM state machine (arming, active, cooldown) and FM mode cycle.
-  runRtmLoop();
-  // V2.5-Evo - 2026-08-26 - FM arm/disarm state machine (pre-throttle arm window; release keeps FM armed)
+  // FM arm/disarm/return state machine. Direct return is owned by the RX's FM_RETURN state.
   runFmLoop();
 
   // V2.5-Evo - 2026-05-13 - SW33b: Hall mag sensor (P_MAG / GPIO 9) — polled every 20ms.
@@ -286,11 +279,7 @@ void loop()
     }
   }
 
-  // V2.5-Evo - 2026-04-27 - P8: Show RTM/FM info (distance/speed) when RTM is active; normal display otherwise
-  if (rtm_tx_active)
-    renderRtmInfoDisplay();
-  else
-    renderOperationalDisplay();
+  renderOperationalDisplay();
   
   //delay(110);
   vTaskDelay(pdMS_TO_TICKS(110));

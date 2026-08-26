@@ -1,4 +1,11 @@
-# Return-to-Me (RTM) and Follow-Me Override - Design Document
+# Return-to-Me (RTM) and Follow-Me Override - Historical Design Document
+
+> **RETIRED 2026-08-26:** This document describes the former standalone RTM implementation and
+> is retained only as design history. The separate gesture, TX/RX state machines, 0xF1 command,
+> PWM path, and user configuration have been removed. Direct return is now the `FM_RETURN` state
+> documented in [DESIGN_FOLLOW_ME.md](DESIGN_FOLLOW_ME.md) and
+> [docs/FOLLOW_ME_GUIDE.md](docs/FOLLOW_ME_GUIDE.md). Do not use the behavior or parameter tables
+> below as current operating instructions.
 **Project:** BREmote V2.5-Evo  
 **Date:** April 21, 2026  
 **Status:** Implemented and operational — Beta release as of V2.5-Evo P8/P9. RTM and FM mode selection are live. FM autonomous following (Priority 9) is not yet implemented. Full field test pending.
