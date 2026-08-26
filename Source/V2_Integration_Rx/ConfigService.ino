@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Claimed the two SW35 reserved rows as steer_reduction_start_pct (1-99%) and steer_full_throttle_pct (1-100%). cfgValidateCrossField() upgrades the zero/invalid bytes from older SW35 configs to the 50%/35% defaults before field validation. Same offsets/types/count/sizeof, SW_VERSION stays 35 and existing config is not wiped.
 // V2.5-Evo - 2026-08-25 - Follow-Me mode validation extended 0-3 -> 0-4 for F4 In Front. Range only; no confStruct/SW_VERSION change.
 // RX-specific config field table and cross-validation.
 // Shared engine is in ../Common/ConfigServiceEngine.h (included via BREmote_V2_Rx.h).
@@ -27,6 +28,8 @@ const CfgFieldSpec kCfgFields[] = {
   {"rf_power", CFG_I16, offsetof(confStruct, rf_power), true, true, true, -9.0f, 22.0f, 0, false},
   {"steering_type", CFG_U16, offsetof(confStruct, steering_type), true, false, true, 0.0f, 2.0f, 0, false},
   {"steering_influence", CFG_U16, offsetof(confStruct, steering_influence), true, false, true, 0.0f, 100.0f, 0, false},
+  {"steer_reduction_start_pct", CFG_U16, offsetof(confStruct, steer_reduction_start_pct), true, false, true, 1.0f, 99.0f, 0, false},
+  {"steer_full_throttle_pct", CFG_FLOAT, offsetof(confStruct, steer_full_throttle_pct), true, false, true, 1.0f, 100.0f, 1, false},
   {"steering_inverted", CFG_U16, offsetof(confStruct, steering_inverted), true, false, true, 0.0f, 1.0f, 0, false},
   {"trim", CFG_I16, offsetof(confStruct, trim), true, false, true, -500.0f, 500.0f, 0, false},
   {"pwm0_min", CFG_U16, offsetof(confStruct, PWM0_min), true, false, true, 500.0f, 2500.0f, 0, false},
@@ -122,20 +125,6 @@ const CfgFieldSpec kCfgFields[] = {
   // starts and ends pointing north) or ?magalign. Snapped to cardinals - the 3.2 deg idle
   // noise floor cannot justify finer resolution.
   {"mag_orientation", CFG_U16, offsetof(confStruct, mag_orientation), true, false, true, 0.0f, 270.0f, 0, false},
-  // V2.5-Evo - 2026-08-16 - RESERVED slots, validated but unread. They are listed here so a
-
-  // config blob containing them round-trips through ?conf / ?setconf and JSON import without
-
-  // being rejected as unknown. Ranges are wide on purpose - the eventual meaning is unknown,
-
-  // and a slot that rejects its own future value is worse than useless. When one is claimed,
-
-  // RENAME IT IN PLACE here and in confStruct, tighten the range, and do NOT bump SW_VERSION.
-
-  {"rsvd_u16_1", CFG_U16,   offsetof(confStruct, rsvd_u16_1), true, false, true, 0.0f, 65535.0f, 0, false},
-
-  {"rsvd_f32_1", CFG_FLOAT, offsetof(confStruct, rsvd_f32_1), true, false, true, -1e6f, 1e6f,    3, false},
-
   // V2.5-Evo - 2026-07-20 - SW34 reserved fields (validation only; not read by v1 control law)
   // V2.5-Evo - 2026-07-25 - A2: fm_engage_dist_m is NO LONGER RESERVED — it is now read live by
   // runFmLoop() in RTMState.ino. 0 = auto (engage distance computed from min_dist_m + smoothing band);
@@ -177,6 +166,22 @@ const size_t kCfgFieldCount = sizeof(kCfgFields) / sizeof(kCfgFields[0]);
 
 bool cfgValidateCrossField(confStruct &candidate, String &err)
 {
+  // V2.5-Evo - 2026-08-27 - in-place migration of the two fields that were reserved in earlier
+  // SW35 builds. Those builds wrote zero here, while someone could also have written any value
+  // through the old wide-range serial keys. Normalize both cases BEFORE validateConfig() checks
+  // the new tight ranges. This preserves every unrelated calibration and avoids a version bump /
+  // full config reset. Direct ?set and web edits still reject out-of-range values at their field
+  // parser; this repair path is for stored/base64 data with the old reserved-slot semantics.
+  if (candidate.steer_reduction_start_pct < 1 || candidate.steer_reduction_start_pct > 99)
+  {
+    candidate.steer_reduction_start_pct = kSteerReductionStartDefaultPct;
+  }
+  if (isnan(candidate.steer_full_throttle_pct) || isinf(candidate.steer_full_throttle_pct) ||
+      candidate.steer_full_throttle_pct < 1.0f || candidate.steer_full_throttle_pct > 100.0f)
+  {
+    candidate.steer_full_throttle_pct = kSteerFullThrottleDefaultPct;
+  }
+
   if (candidate.PWM0_max <= candidate.PWM0_min)
   {
     err = "ERR_CROSS:PWM0_max must be > PWM0_min";

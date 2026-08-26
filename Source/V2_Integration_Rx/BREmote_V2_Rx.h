@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Throttle-dependent steering authority: the two SW35 reserved tail slots are renamed in place to steer_reduction_start_pct (u16, default 50%) and steer_full_throttle_pct (float, default 35%). PWM.ino applies one smoothstep curve after manual/RTM/FM arbitration, so all steering sources lose authority progressively above the start point. Existing SW35 configs contain zero in both formerly-reserved slots; cfgValidateCrossField() promotes those legacy zeros to the new defaults before range validation. No field moved/resized, sizeof stays 192 and SW_VERSION stays 35, so no SPIFFS config wipe.
 // V2.5-Evo - 2026-08-26 - Added shared compile-time kFmManualSteerDeadband=40 for FM manual-steering arbitration in both PWM.ino and RTMState.ino. No confStruct field/size/version change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - COMMENT-ONLY size correction (no code, no struct, no SW_VERSION change): the mag_orientation block claimed "sizeof 184 -> 188". The finished struct is 192 — mag_orientation (2) plus the two reserved slots rsvd_u16_1 (2) and rsvd_f32_1 (4) that landed in the same SW34->35 edit, naturally aligned with no tail pad. The static_assert has always said 192; only the prose was wrong. Corrected in three places: the mag_orientation block, the "confStruct is 184 bytes" line in the log_level block (retensed as history), and the static_assert's own trailing history, which never recorded the 184->192 step and now does. Flagged as load-bearing rather than cosmetic because the SW34->35 config-backup migration is pinned to the exact counts 184 (legacy) and 192 (current) and disables itself if either stops matching. Every remaining "184" in this file sits inside a dated change-history entry and is correct AS HISTORY — the static_assert is the SSOT for the current size.
 // V2.5-Evo - 2026-08-17 - defaultConf.vesc_timeout_s raised 6 -> 10 s, because a VESC cold restart takes roughly 8-9 seconds and 6 s is shorter than that: every restart blanked the rider's battery % and FET temperature to "N/A" on the TX while the VESC was merely booting. 10 s covers the restart and is still half the original hardcoded 20 s. VALUE-ONLY change to an existing field: no field added, moved, renamed or resized, and the 5-60 s validation range in ConfigService is untouched — so sizeof(confStruct) stays 192, the static_assert is unchanged, SW_VERSION stays 35 and the owner's SPIFFS config is NOT wiped by this flash. Because it is NOT wiped, a board with a stored vesc_timeout_s keeps its old value: it must be set on the device with `?set vesc_timeout_s 10` + `?save`. Second consumer checked — RTM Phase C check 2 uses the same field to decide when to SKIP its VESC-ERPM-vs-GPS-speed comparison; a longer timeout means fewer skips, and since a skipped check and a passed check have the identical outcome (no stop) the check's coverage can only widen, never shrink.
@@ -58,6 +59,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/SteeringCurve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -94,6 +96,11 @@
 #define SW_VERSION 35  // V2.5-Evo — 35 = mag_orientation appended (compass mounting rotation); sizeof 184->192 (mag_orientation + 2 reserved slots banked for future no-bump features), config IS reset by this flash. 34 = added fm_engage_dist_m / auton_runtime_cap_s / fm_steer_reposition_en reserved slots + defaultConf carries factory default config (compass cal, near_diag_offset 45); first flash resets all RX SPIFFS config to defaults. NOTE (2026-07-25, STAGE 0 PART A): the third of those slots has since been RENAMED IN PLACE to log_level — same offset, same uint16_t, sizeof(confStruct) still 184 — so this stays 34 and NO further config wipe happens.
 const char* CONF_FILE_PATH = "/data.txt";
 const char* BC_FILE_PATH = "/batconf.txt";
+
+// Factory curve and migration fallbacks for the two SW35 tail slots. cfgValidateCrossField()
+// uses the same values when it encounters the zero bytes stored while these slots were reserved.
+static constexpr uint16_t kSteerReductionStartDefaultPct = 50;
+static constexpr float    kSteerFullThrottleDefaultPct   = 35.0f;
 
 /*
 ** Structs
@@ -467,63 +474,18 @@ struct confStruct {
 
 
     // ============================================================
-
-    // V2.5-Evo - 2026-08-16 - RESERVED SLOTS, banked deliberately.
-
+    // V2.5-Evo - 2026-08-27 - the two scalar slots banked with SW35 are now claimed by the
+    // high-throttle steering curve. The original names were rsvd_u16_1 and rsvd_f32_1.
     //
-
-    // SW34 banked three of these and TWO have already paid for themselves without costing
-
-    // anyone a config reset: fm_steer_reposition_en became log_level (2026-07-25), and
-
-    // auton_runtime_cap_s became gps_dyn_model (2026-08-16). The pattern works, so since
-
-    // SW35 is spending a reset anyway, bank more now rather than charge riders again for
-
-    // the next small setting.
-
-    //
-
-    // RULES for reusing one - the same ones that made the last two free:
-
-    //   1. RENAME IN PLACE. Same offset, same type. Never insert, never reorder.
-
-    //   2. sizeof(confStruct) must not change, so the static_assert stays untouched.
-
-    //   3. SW_VERSION must NOT be bumped - that is the whole point.
-
-    //   4. 0 must remain a safe, behaviour-preserving default, because that is what every
-
-    //      board in the field already holds here.
-
-    //   5. Update the kCfgFields row and both web UIs in the same commit.
-
-    //
-
-    // WHAT THESE CANNOT DO: anything needing an ARRAY. Multi-TX needs a table of paired
-
-    // addresses, not a scalar, so it will need a real struct change and its own bump. These
-
-    // slots are for scalars - a threshold, a mode, an enable flag, a coefficient.
-
-    //
-
-    // Candidates already visible: magnetic declination (compass reads magnetic, GPS COG is
-
-    // true-referenced); a motor-EMI compass compensation coefficient; the autonomous-runtime
-
-    // cap that gps_dyn_model displaced; further GPS or FM tuning values.
-
+    // Both fields are renamed IN PLACE and keep their original types. Never insert or reorder
+    // them: the SW34 -> SW35 backup migration relies on the 184-byte legacy struct being an exact
+    // prefix of this 192-byte struct.
     // ============================================================
 
-    uint16_t rsvd_u16_1;               // RESERVED. 0 = unused. Rename in place; do NOT bump.
-
-
-
-
-    float    rsvd_f32_1;               // RESERVED. 0 = unused. For a threshold or coefficient.
-
-
+    // Firmware that predates the feature stored zero here; cfgValidateCrossField() promotes zero
+    // or an invalid old reserved value to the 50% / 35% defaults before range validation.
+    uint16_t steer_reduction_start_pct; // 1-99%. Full steering at/below this effective throttle.
+    float    steer_full_throttle_pct;   // 1-100%. Steering authority retained at full throttle.
 };
 static_assert(sizeof(confStruct) == 192, "confStruct size mismatch — expected 192 bytes. Update this assert if you change the struct.");  // 176->184: +fm_engage_dist_m(float 4) +auton_runtime_cap_s(u16 2) +fm_steer_reposition_en(u16 2), all naturally aligned, no tail pad (2026-07-20 SW34)  // 172->176 motor_ramp_s float (2026-06-05 SW33)  // 112->128 Phase A; 128->136 Phase B; 136->152 P7 RTM; 152->156 Bundle B; 156 unchanged BundleE; 156->160 rtm_approach_zone_m (uint16_t + 2-byte tail pad) (2026-04-30); D3 rtm_use_compass + rtm_cog_min_speed_kmh (2x uint8_t) fill the 2-byte tail pad — sizeof stays 160 (2026-05-06); D3-Fix: uint8_t→uint16_t for ConfigService compatibility, sizeof unchanged at 164 (2026-05-06); Bundle 1: dummy_delete_me renamed to rtm_steer_response in-place, sizeof unchanged at 164 (2026-05-08); STAGE 0 PART A: fm_steer_reposition_en renamed to log_level in-place — same offset, same uint16_t, sizeof STILL 184 and SW_VERSION STILL 34, so this flash does NOT reset SPIFFS config (2026-07-25); auton_runtime_cap_s renamed to gps_dyn_model in-place, sizeof STILL 184, SW_VERSION STILL 34 (2026-08-16); 184->192 SW34->35: +mag_orientation(u16 2) +rsvd_u16_1(u16 2) +rsvd_f32_1(float 4), appended at the tail, naturally aligned, no tail pad — the one intended config wipe for this bump (2026-08-16). THIS NUMBER IS THE SSOT: the SW34->35 config-backup migration is pinned to 184 (legacy) and 192 (current) and disables itself if either stops matching, so any prose elsewhere that disagrees with the 192 above is stale and must be corrected rather than trusted.
 confStruct usrConf;
@@ -594,13 +556,8 @@ confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: convent
   // (Developer), which is the behaviour every unit already has, so nothing changes on flash.
   0,          // log_level: 0 = unset -> logs as level 3 (Developer). 1/2 accepted but currently log as 3; 4 = Deep.
   0,          // mag_orientation: 0 deg. Set by ?compasscal (north-to-north) or ?magalign.
-  0,            // rsvd_u16_1  RESERVED - 0 = unused
-
-
-  0.0f          // rsvd_f32_1  RESERVED - 0 = unused
-
-
-
+  kSteerReductionStartDefaultPct, // steer_reduction_start_pct: full authority through 50% effective throttle
+  kSteerFullThrottleDefaultPct    // steer_full_throttle_pct: retain 35% authority at full throttle
 };
 
 // ============================================================

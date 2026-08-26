@@ -584,6 +584,25 @@ On any gate failure: throttle → 0, TX display shows `St` for 2 s, haptic confi
 
 </details>
 
+### Throttle-dependent steering (RX)
+
+The RX progressively reduces steering authority at high throttle to lower the tow buggy's
+rollover risk. The curve is applied after manual/RTM/Follow-Me steering arbitration, so it covers
+all three paths identically. It uses `effective_thr` after RTM/FM safety caps rather than the raw
+trigger position: when an assist mode genuinely reduces motor power, the matching low-speed
+steering authority remains available.
+
+| RX parameter | Default | Description |
+|---|---:|---|
+| `steer_reduction_start_pct` | 50% | Full steering at and below this effective throttle; smooth reduction begins above it (1–99%). |
+| `steer_full_throttle_pct` | 35% | Steering authority retained at full throttle (1–100%; set 100% to disable the reduction). |
+
+With the defaults, steering authority is approximately 100% at 50% throttle, 77% at 70%, 58% at
+80%, 42% at 90%, and 35% at full throttle. This multiplies the normal `steering_influence`; for
+example, 50% base influence becomes 17.5% at full throttle. The limiter is throttle-based, not a
+speed sensor: bench-test first, then validate the values at low speed in a controlled area before
+any full-power run.
+
 ---
 
 ## Follow-Me Mode Override (FM) — Full Guide
@@ -905,7 +924,7 @@ The data logger is the primary tool for validating and tuning the RTM/FM steerin
 > The last five — `remote_error`, `effective_steer`, `tx_distance_m`, `rssi_dbm`, `snr_db` — were added in the 2026-07-19 and 2026-07-24 updates. `rssi_dbm` / `snr_db` are the LoRa link quality measured **at the RX for the packets the TX sent**, i.e. the *command* link, which is the direction that matters for control. `-999` / `-99.0` / `-1.0` are the "no data" sentinels.
 
 <details>
-<summary><strong>Click to expand: Full log column reference (14 fields with tuning relevance)</strong></summary>
+<summary><strong>Click to expand: Full log column reference (steering-tuning fields)</strong></summary>
 
 <br>
 
@@ -919,6 +938,7 @@ The data logger is the primary tool for validating and tuning the RTM/FM steerin
 | `rtm_confidence` | 3=HIGH, 2=MED, 1=LOW, 0=none | Modifier on steering authority |
 | `rtm_rx_active` | 1 = RTM engaged, 0 = idle | Mark when RTM is actually doing work |
 | `rtm_steer_override` | Final steering output (127 = straight) | What the buggy was told to do |
+| `effective_steer` | Steering byte after manual/automatic arbitration and throttle-dependent authority (127 = straight) | Confirms how much steering actually reached the motor/servo mixer at the current throttle |
 | `rtm_heading_chosen_dx10` | Heading used for steering (0.1° units) | What the controller used as "current heading" |
 | `gps_course_dx10` | Raw GPS COG (0.1° units) | Independent reference for direction-of-travel |
 | `compass_live_dx10` | Live compass (0.1° units) | Independent reference; diverges from GPS COG under motor EMI |

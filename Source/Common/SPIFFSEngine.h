@@ -1,6 +1,7 @@
 #ifndef SPIFFS_ENGINE_H
 #define SPIFFS_ENGINE_H
 
+// V2.5-Evo - 2026-08-27 - The two SW35 reserved tail slots are now steering-curve settings. The SW34 migration still zero-initializes the appended tail; RX cfgValidateCrossField() then promotes those zeros to the new 50%/35% defaults before field validation. Layout, migration gates and copy length are unchanged.
 // V2.5-Evo - 2026-08-16 - Legacy config-blob migration: an SW34 (184-byte) RX backup is now accepted and migrated onto the SW35 (192-byte) struct, because SW34 is a byte-exact prefix of SW35. Gated on that exact size/version pair only; inert on the TX.
 // V2.5-Evo - 2026-08-16 - readConfFromSPIFFS() stages the decoded blob in a local copy and only writes it into the caller's struct AFTER validation passes; a rejected config no longer runs the board.
 // V2.5-Evo - 2026-07-21 - Stale-config trap fix (shared TX/RX): getConfFromSPIFFS() now re-bakes defaults on a SAME-SIZE SW_VERSION mismatch instead of running on stale config bytes. Dormant when versions match — no wipe on a same-version reflash.
@@ -314,17 +315,21 @@ bool readConfFromSPIFFS(confStruct& data) {
 // WHY A MIGRATION IS SAFE FOR THIS ONE PAIR, AND ONLY THIS ONE PAIR
 //   The RX SW34 -> SW35 change APPENDED its new fields at the very END of confStruct:
 //     SW34 = 184 bytes, ending with log_level (uint16_t) at offset 182.
-//     SW35 = those same 184 bytes, then mag_orientation (uint16_t, 2) + rsvd_u16_1 (uint16_t, 2)
-//            + rsvd_f32_1 (float, 4) = 192 bytes.
+//     SW35 = those same 184 bytes, then mag_orientation (uint16_t, 2)
+//            + steer_reduction_start_pct (uint16_t, 2; originally rsvd_u16_1)
+//            + steer_full_throttle_pct (float, 4; originally rsvd_f32_1) = 192 bytes.
 //   Nothing was inserted, moved, resized or reordered inside the first 184 bytes, so an SW34 blob
 //   is a BYTE-EXACT PREFIX of an SW35 struct: copying it into the front of an SW35 struct puts every
 //   value back at the offset it already belonged to.
-//   Two values are not merely aligned but genuinely correct, which is what makes this a migration
+//   The appended and renamed values are not merely aligned but genuinely initialized, which makes this a migration
 //   rather than a lucky overlay:
 //     - mag_orientation = 0 means "no rotation", which reproduces SW34 behaviour exactly. SW34 had
 //       no concept of compass mounting orientation at all, so there is no old value to carry.
 //     - gps_dyn_model was RENAMED IN PLACE from a reserved slot, so an SW34 board already stores 0
 //       in it, and 0 resolves to Sea - the SW34 behaviour. Nothing to translate.
+//     - the two appended steering fields did not exist in SW34 and are zeroed by the migration;
+//       cfgValidateCrossField() promotes those legacy zeros to their valid 50% / 35% defaults
+//       before range validation, exactly as it does for an older same-version SW35 stored config.
 //
 // WHY IT FAILS CLOSED, AND WHEN IT STOPS BEING SAFE
 //   The prefix argument holds ONLY for these four numbers. It is not a general rule, and it is NOT
@@ -390,12 +395,12 @@ bool cfgMigrateLegacyBlob(const uint8_t* blob, size_t decodedLen, uint16_t blobV
     // follows, and for the same reason: a config that fails validation must never have run the board.
     confStruct staged;
 
-    // Zero first, then overlay the legacy prefix. Zeroing the whole struct is what sets the three
-    // fields SW34 never had - mag_orientation, rsvd_u16_1 and rsvd_f32_1 - to 0, and 0 is the
-    // behaviour-preserving default for all three (mag_orientation 0 = no rotation; both reserved
-    // slots are unused and defined as 0 = unused). Doing it with a memset rather than by naming the
-    // three fields means a future appended field cannot be forgotten here and left holding whatever
-    // happened to be on the stack.
+    // Zero first, then overlay the legacy prefix. Zeroing sets the three fields SW34 never had to
+    // zero. mag_orientation=0 is already its final neutral value. The two steering settings were
+    // originally reserved zeros; cfgValidateCrossField() below promotes them to the current 50% /
+    // 35% defaults before validateConfig() applies their now-tight ranges. Doing this with memset
+    // rather than naming the fields also prevents a future appended field from being forgotten and
+    // left holding whatever happened to be on the stack.
     memset(&staged, 0, sizeof(staged));
 
     // Clamped to the smaller of the two sizes so the copy is provably in bounds on any board, even

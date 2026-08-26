@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - High-throttle steering reduction: after manual/RTM/FM arbitration, scale the selected steering command about neutral 127 using effective throttle and the configurable smoothstep curve (default: full authority through 50% throttle, 35% authority at full). Because it is applied after arbitration it covers manual, RTM and FM identically; because it uses effective_thr it follows the throttle the cap chain actually permits. g_effective_steer continues to log the command actually sent into the mixer. No packet/struct-size/SW_VERSION change.
 // V2.5-Evo - 2026-08-26 - FM manual steering takeover: a rider deflection outside kFmManualSteerDeadband immediately wins over the FM steering override without changing FM state, separation latch or throttle cap. Centring the stick hands steering back to FM. RTM behaviour is unchanged.
 // V2.5-Evo - 2026-07-19 - P3 FM: calcPWM() applies fm_throttle_cap (subtract-only, lowest cap wins) and lets fm_rx_active gate the steering override alongside rtm_rx_active. Throttle can still only be reduced, never added, and the thr_received>=25 steering gate is unchanged.
 // V2.5-Evo - 2026-07-19 - FM triage: calcPWM() records effective_steer into g_effective_steer (diagnostic observer only — no control-path change) so the logger can show the actuation gap
@@ -113,6 +114,21 @@ void calcPWM()
                              thr_received >= 25)
                             ? (uint8_t)rtm_steer_override
                             : steering_received;
+
+  // Reduce steering progressively as the throttle actually permitted by the safety/cap chain
+  // rises. The curve scales only the deviation from neutral, so 127 remains exactly 127 and the
+  // feature cannot introduce a left/right bias. Smoothstep has zero slope at the 50% default
+  // start and at full throttle: there is no steering step at either boundary.
+  //
+  // This deliberately happens AFTER manual-vs-automatic arbitration, making the same rollover
+  // protection apply to manual riding, FM manual takeover, RTM and autonomous FM. It happens
+  // BEFORE g_effective_steer is sampled, so the logger records the value the motor/servo mixer
+  // actually receives. Setting steer_full_throttle_pct to 100 disables the reduction.
+  effective_steer = applyThrottleSteeringAuthority(
+      effective_steer,
+      effective_thr,
+      (float)usrConf.steer_reduction_start_pct,
+      usrConf.steer_full_throttle_pct);
 
   // V2.5-Evo - 2026-07-19 - FM triage: record the steering byte actually applied this loop for
   // the logger. Diagnostic observer only — this write does not alter any PWM/motor control path.
