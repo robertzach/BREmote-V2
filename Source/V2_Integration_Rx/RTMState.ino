@@ -58,7 +58,7 @@ extern void          updateCompassSnapshot();   // From Compass.ino (D2) — cap
 // ============================================================
 // RTM/FM STEERING CONTROLLER PRESETS — Bundle 1 (2026-05-08)
 //
-// PID-style controller: output = Kp * clamped_error - Kd * d(error)/dt
+// PID-style controller: output = Kp * clamped_error + Kd * d(error)/dt
 // Plus a low-pass filter on TARGET POSITION (lat/lng) for FM path-following
 // — surfer's high-frequency bottom turns are smoothed out, buggy follows
 // the surfer's path rather than chasing every wobble.
@@ -1834,7 +1834,9 @@ static void updateRtmSteering()
   // Confidence: LOW conf reduces total authority by 50% (preserves D5 behavior)
   float authority = (confidence == 1) ? 0.5f : 1.0f;
 
-  float output = 127.0f + authority * (p_term - d_term);
+  // d_error is the derivative of heading_error itself. Adding it provides damping:
+  // while a corrective turn shrinks the error, d_error opposes p_term.
+  float output = 127.0f + authority * (p_term + d_term);
   if (output < 0.0f)   output = 0.0f;
   if (output > 254.0f) output = 254.0f;
   rtm_steer_override = (uint8_t)output;
