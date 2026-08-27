@@ -646,8 +646,8 @@ static void webCfgHandleDownloadLog()
   // ============================================================
   // V2.5-Evo - 2026-07-25 - STAGE 0 PART B: read the self-describing file header FIRST.
   //
-  // Records are no longer a fixed size — current level-4 files write 83-byte records (legacy Deep
-  // files use 65) where a level-3 file writes 59 — so the reader must take the size from the FILE
+  // Records are no longer a fixed size — current level-4 files write 96-byte records (older Deep
+  // files use 65 or 83) where a level-3 file writes 59 — so the reader must take the size from the FILE
   // sizeof(VescLogData). This runs BEFORE the chunked 200 response is opened, so an unreadable
   // file can still be answered with a proper JSON error instead of a half-sent CSV body.
   //

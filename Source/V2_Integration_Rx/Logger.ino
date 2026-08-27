@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Level-4 records now copy the controller-published 13-byte heading-evidence audit after the 83-byte FM block. CSV exposes the configured ladder mode, signed compass/COG gap, set/clear dwell progress, last-good/snapshot ages and raw COG/snapshot/comparison flags. 65-byte and 83-byte historical Deep records remain readable through record_size. Instrumentation only; no control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Log mirror follows the GPS-only disagreement degradation: a per-tick compass-vs-COG disagreement no longer vetoes valid COG, so rtm_source/confidence report GPS_COG 1/3 while the controller uses it. The persistent latch still excludes only compass branches; held COG remains 1/2. Read-only mirror change, no record/packet/config/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Level-4 logs now append an 18-byte Follow-Me engage-audit snapshot: exact mode/state/block reason, cap, radial distance/effective D_engage, rider speed, separation-dwell progress, F4 angle and every relevant gate bit. The snapshot is published by runFmLoop(), not recomputed here, so logging cannot disagree with or mutate the controller. New Deep records are 83 bytes; their first 65 bytes remain byte-identical to the old Deep layout. Header selection and row formatting use the file's stored record_size, so existing 65-byte logs still export with their original 35-column CSV while new files export the FM columns. The 8-byte BRLG header layout and format version are unchanged; no confStruct/SW_VERSION change.
 // V2.5-Evo - 2026-08-17 - CRITICAL MAINTENANCE contract honoured again, same day, because the controller moved again (log mirror only): a standing heading-disagreement latch no longer just withdraws the compass, it drops the WHOLE ladder to the mode-0 path — GPS course only — so getRtmHeading() now returns NONE below rtm_cog_min_speed_kmh instead of serving a held COG, and returns NONE in mode 2 instead of serving the live compass. Two branches of this duplicate had to follow or the CSV would contradict the controller in exactly the state a rider would be reporting: (1) the COG-HOLD branch is now gated on !headingDisagreeLatched(), so a degraded tick logs src 0 / conf 0 rather than claiming a held GPS course the controller did not serve; (2) the mode-2 branch is gated the same way, so a diagnostic-mode session whose compass has been proven wrong logs NONE rather than src 3 / conf 2 COMPASS_LIVE. The compass-snapshot branch keeps the gate it was given this morning. Everything else about the mirror is unchanged, and the ORDER still matches the controller exactly: disagreement veto, live COG, held COG, compass snapshot. STRICTLY READ-ONLY: two more calls to the same read-only accessor from loggerTask, no controller state written, no timing changed. NO new column, no new rtm_source value, no record-size change — existing logs stay parseable. No confStruct change, no VescLogData change, sizeof stays 192, SW_VERSION stays 35.
@@ -516,6 +517,13 @@ static void fillLevel4Diag(VescLogDataL4 &rec)
     rec.fm_state            = fm.state;
     rec.fm_block_reason     = fm.block_reason;
     rec.fm_throttle_cap     = fm.throttle_cap;
+    rec.heading_diag_flags        = fm.heading_diag_flags;
+    rec.compass_cog_diff_dx10     = fm.compass_cog_diff_dx10;
+    rec.heading_disagree_dwell_ms = fm.heading_disagree_dwell_ms;
+    rec.heading_agree_dwell_ms    = fm.heading_agree_dwell_ms;
+    rec.cog_last_good_age_ms      = fm.cog_last_good_age_ms;
+    rec.compass_snap_age_ms       = fm.compass_snap_age_ms;
+    rec.heading_mode              = fm.heading_mode;
   } else {
     rec.fm_distance_dx10    = 0xFFFF;
     rec.fm_d_engage_dx10    = 0xFFFF;
@@ -523,6 +531,10 @@ static void fillLevel4Diag(VescLogDataL4 &rec)
     rec.fm_front_angle_dx10 = 0x7FFF;
     rec.fm_block_reason     = FM_LOG_BLOCK_UNKNOWN;
     rec.fm_throttle_cap     = 255;
+    rec.compass_cog_diff_dx10 = 0x7FFF;
+    rec.cog_last_good_age_ms  = 0xFFFF;
+    rec.compass_snap_age_ms   = 0xFFFF;
+    rec.heading_mode          = 0xFF;
   }
 }
 
@@ -683,7 +695,7 @@ void loggerTask(void* parameter) {
       uint8_t  rec_buf[sizeof(VescLogDataL4)];
       uint16_t rec_len;
       if (active_log_level >= 4) {
-        VescLogDataL4 logData4;
+        VescLogDataL4 logData4 = {};
         logData4.base = convertToLogData();
         fillLevel4Diag(logData4);
         memcpy(rec_buf, &logData4, sizeof(logData4));
@@ -814,8 +826,8 @@ void downloadLogFile(const char* filename) {
   // ============================================================
   // V2.5-Evo - 2026-07-25 - STAGE 0 PART B: read the self-describing file header FIRST.
   //
-  // Records are no longer a fixed size — current level-4 files write 83-byte records (legacy Deep
-  // files use 65) where a level-3 file writes 59 — so the reader must take the size from the file
+  // Records are no longer a fixed size — current level-4 files write 96-byte records (older Deep
+  // files use 65 or 83) where a level-3 file writes 59 — so the reader must take the size from the file
   // sizeof(VescLogData). Stepping by the wrong size does not fail loudly; it walks off the
   // record boundary and prints thousands of lines of plausible-looking nonsense, which is worse
   // than no data at all. Hence: no valid header, no output.

@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - The coherent Level-4 FM snapshot now includes the raw heading-evidence chain: configured ladder mode, live/held COG subconditions, snapshot freshness, compass-vs-COG comparison/difference, latch state and set/clear dwell progress. It is computed read-only at the end of the existing 10 Hz FM tick and lets a log explain why condition 6 passed without altering heading selection. No control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - A proven compass-vs-COG disagreement no longer blocks or aborts Follow-Me. The disagreement still latches and withdraws the compass, but live GPS COG and the short held-COG bridge remain valid FM heading sources. Per-tick disagreement no longer vetoes that valid COG. FM still requires an actual heading: no/stale/frozen COG while the compass is withdrawn remains a condition-6 failure. Telemetry and serial diagnostics now report GPS-only degradation instead of "will not engage". No config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - FM divergence ceiling is now configurable as the absolute-metre fm_diverge_dist_m. Its effective value is never below 2 x D_engage and never above 100 m. The setting claims the existing final reserved float without changing layout or SW_VERSION; 0 reconstructs the old 6 x D_engage behavior and applies the new 100 m cap for existing SW35 configs. Dwell, closure epsilon, engage grace and fault path are unchanged.
 // V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
@@ -1557,7 +1558,8 @@ static bool          fm_front_warning    = false;  // bit7: F4 front-position wa
 static portMUX_TYPE      fm_log_diag_mux = portMUX_INITIALIZER_UNLOCKED;
 static FmLogDiagSnapshot fm_log_diag_snapshot = {
   0, 0xFFFF, 0xFFFF, 0xFFFF, 0, 0x7FFF,
-  0xFF, (uint8_t)FM_IDLE, (uint8_t)FM_LOG_BLOCK_NO_DECLARATION, 255
+  0xFF, (uint8_t)FM_IDLE, (uint8_t)FM_LOG_BLOCK_NO_DECLARATION, 255,
+  0, 0x7FFF, 0, 0, 0xFFFF, 0xFFFF, 0xFF
 };
 
 static uint32_t    fm_diag_gate_flags       = 0;
@@ -1586,6 +1588,22 @@ static int16_t fmDiagSignedDx10(float value)
   return (int16_t)lroundf(scaled);
 }
 
+static uint16_t fmDiagAgeMs(unsigned long now, unsigned long timestamp)
+{
+  if (timestamp == 0) return 0xFFFF;
+  unsigned long age = now - timestamp;
+  return (age > 0xFFFEUL) ? 0xFFFE : (uint16_t)age;
+}
+
+static uint16_t fmDiagDwellMs(unsigned long now, unsigned long since,
+                              unsigned long limit)
+{
+  if (since == 0) return 0;
+  unsigned long elapsed = now - since;
+  if (elapsed > limit) elapsed = limit;
+  return (elapsed > 0xFFFEUL) ? 0xFFFE : (uint16_t)elapsed;
+}
+
 static void fmPublishLogDiagSnapshot(unsigned long now)
 {
   FmLogDiagSnapshot next = {};
@@ -1611,6 +1629,72 @@ static void fmPublishLogDiagSnapshot(unsigned long now)
   next.state            = (uint8_t)fm_state;
   next.block_reason     = fm_diag_block_reason;
   next.throttle_cap     = fm_throttle_cap.load(std::memory_order_relaxed);
+
+  // Raw heading evidence for this exact FM tick. This mirrors only primitive predicates; it never
+  // calls getRtmHeading(), touches a dwell, or changes a source. That keeps diagnostics unable to
+  // affect the controller while still exposing every reason live/held COG was accepted or refused.
+  uint16_t heading_flags = 0;
+  uint8_t heading_mode = (uint8_t)usrConf.rtm_use_compass;
+  bool cog_captured = (gps_last_course_ms > 0) &&
+                      (gps_last_course_deg >= 0.0f) && (gps_last_course_deg < 360.0f);
+  bool cog_timestamp_fresh = cog_captured && ((now - gps_last_course_ms) < 1500UL);
+  bool cog_speed_ok = (gps_last_speed_kmh >= (float)usrConf.rtm_cog_min_speed_kmh);
+  bool cog_frozen_moving = false;
+  if (cog_speed_ok && cog_timestamp_fresh) {
+    unsigned long cog_change_ms = (unsigned long)g_diag_cog_change_ms;
+    cog_frozen_moving = (cog_change_ms != 0) &&
+                        ((now - cog_change_ms) >= (unsigned long)kRtmCogFrozenMs);
+  }
+  bool gps_fix_fresh = (gps_last_ms > 0) && ((now - gps_last_ms) <= 6000UL);
+  bool cog_live_valid = gps_fix_fresh && cog_timestamp_fresh &&
+                        cog_speed_ok && !cog_frozen_moving;
+
+  uint16_t cog_last_good_age_ms = fmDiagAgeMs(now, cog_last_good_ms);
+  bool cog_hold_valid = (heading_mode == 1) && !cog_live_valid && !cog_frozen_moving &&
+                        (cog_last_good_age_ms != 0xFFFF) &&
+                        (cog_last_good_age_ms < (uint16_t)kCogHoldMs);
+
+  uint16_t compass_snap_age_ms = fmDiagAgeMs(now, compass_snapshot_ms);
+  bool compass_snap_present = (compass_snapshot_heading >= 0.0f) &&
+                              (compass_snapshot_heading < 360.0f) &&
+                              (compass_snap_age_ms != 0xFFFF);
+  bool compass_snap_fresh = compass_snap_present &&
+                            (compass_snap_age_ms < (uint16_t)kHeadingCompareSnapMs);
+  bool compass_snap_usable = compass_snap_present && (compass_snap_age_ms < 8000u);
+  bool compare_possible = (heading_mode == 1) && cog_live_valid && compass_snap_fresh;
+
+  int16_t compass_cog_diff_dx10 = 0x7FFF;
+  bool disagree_now = false;
+  if (compare_possible) {
+    float diff = gps_last_course_deg - compass_snapshot_heading;
+    while (diff > 180.0f) diff -= 360.0f;
+    while (diff < -180.0f) diff += 360.0f;
+    compass_cog_diff_dx10 = (int16_t)lroundf(diff * 10.0f);
+    disagree_now = (fabsf(diff) > kHeadingDisagreeDeg);
+  }
+
+  if (cog_captured)           heading_flags |= HEADING_LOG_COG_CAPTURED;
+  if (cog_timestamp_fresh)    heading_flags |= HEADING_LOG_COG_TIMESTAMP_FRESH;
+  if (cog_speed_ok)           heading_flags |= HEADING_LOG_COG_SPEED_OK;
+  if (cog_frozen_moving)      heading_flags |= HEADING_LOG_COG_FROZEN_MOVING;
+  if (cog_live_valid)         heading_flags |= HEADING_LOG_COG_LIVE_VALID;
+  if (cog_hold_valid)         heading_flags |= HEADING_LOG_COG_HOLD_VALID;
+  if (compass_snap_fresh)     heading_flags |= HEADING_LOG_COMPASS_SNAP_FRESH;
+  if (compass_snap_usable)    heading_flags |= HEADING_LOG_COMPASS_SNAP_USABLE;
+  if (compare_possible)       heading_flags |= HEADING_LOG_COMPARE_POSSIBLE;
+  if (disagree_now)           heading_flags |= HEADING_LOG_DISAGREE_NOW;
+  if (heading_disagree_fault) heading_flags |= HEADING_LOG_DISAGREE_LATCHED;
+  if (gps_fix_fresh)          heading_flags |= HEADING_LOG_GPS_FIX_FRESH;
+
+  next.heading_diag_flags        = heading_flags;
+  next.compass_cog_diff_dx10     = compass_cog_diff_dx10;
+  next.heading_disagree_dwell_ms = fmDiagDwellMs(now, heading_disagree_since_ms,
+                                                  kHeadingDisagreeMs);
+  next.heading_agree_dwell_ms    = fmDiagDwellMs(now, heading_agree_since_ms,
+                                                  kHeadingDisagreeMs);
+  next.cog_last_good_age_ms      = cog_last_good_age_ms;
+  next.compass_snap_age_ms       = compass_snap_age_ms;
+  next.heading_mode              = heading_mode;
 
   if (fm_sep_latched) {
     next.sep_dwell_ms = (uint16_t)kFmSepDwellMs;

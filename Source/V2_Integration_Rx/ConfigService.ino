@@ -153,7 +153,7 @@ const CfgFieldSpec kCfgFields[] = {
   //   1 = Basic  RESERVED for a future storage optimisation (smaller records) — CURRENTLY LOGS AS 3.
   //   2 = VESC   RESERVED for a future storage optimisation (smaller records) — CURRENTLY LOGS AS 3.
   //   3 = Developer, the full 59-byte record this firmware has always written.
-  //   4 = Deep, Developer plus GPS/loop diagnostics and the FM engage-audit block (83 bytes/record).
+  //   4 = Deep, Developer plus GPS/loop, FM engage and heading-evidence audits (96 bytes/record).
   // 1 and 2 are deliberately ACCEPTED rather than rejected: a rider can select them now and a later
   // firmware will honour them without another config migration. They are NOT silently ignored —
   // the fallback to level 3 is stated in the field comment, in both web UIs and in the standalone

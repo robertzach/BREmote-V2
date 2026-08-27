@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Deep logs append a 13-byte heading-evidence audit after the existing 83-byte FM audit record: configured heading mode, compass-vs-COG difference, set/clear dwell progress, last-good-COG and compass-snapshot ages, plus twelve raw validity/evidence flags. The BRLG record_size keeps 65-byte and 83-byte Deep files readable with their matching historical CSV headers. Instrumentation only; no control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering without a config reset: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct and rsvd_u16_1 renamed in place to steer_reduction_start_pct. Defaults 35%/50%; cfgValidateCrossField() migrates legacy values before validation. PWM applies the smoothstep curve after manual/FM arbitration using effective throttle, so manual riding and automatic FM share the same rollover protection. Types, offsets, sizeof(confStruct)==192 and SW_VERSION 35 are unchanged.
 // V2.5-Evo - 2026-08-27 - fm_diverge_dist_m claims the banked rsvd_f32_1 slot in place as an absolute-metre setting. The effective limit is clamped to [2 x effective D_engage, 100 m]. Same final float, same offset and sizeof(confStruct)==192, so SW_VERSION remains 35 and stored RX configuration is not reset. Existing boards contain 0 in this formerly unused slot; 0 derives the previous 6 x D_engage limit and applies the new 100 m maximum. New/default configs store 100 m explicitly. No packet or struct-layout change.
 // V2.5-Evo - 2026-08-26 - Added shared compile-time kFmManualSteerDeadband=40 for FM manual-steering arbitration in both PWM.ino and RTMState.ino. No confStruct field/size/version change; SW_VERSION stays 35.
@@ -437,8 +438,8 @@ struct confStruct {
     //   1 = Basic   — RESERVED for a future storage optimisation; CURRENTLY LOGS AS LEVEL 3.
     //   2 = VESC    — RESERVED for a future storage optimisation; CURRENTLY LOGS AS LEVEL 3.
     //   3 = Developer — the full 59-byte record this firmware has always written.
-    //   4 = Deep      — Developer plus GPS/loop diagnostics and the Follow-Me engage-audit
-    //       snapshot (mode/state/block reason, distance/D_engage, dwell and gates) = 83 bytes/record.
+    //   4 = Deep      — Developer plus GPS/loop, Follow-Me engage and heading-evidence audits
+    //       (mode/state/block reason, gates, COG/snapshot validity and disagreement) = 96 bytes.
     // Levels 1 and 2 are ACCEPTED by the validator (so a rider can set them and a future
     // firmware will honour them) but are deliberately NOT silently ignored: they are documented
     // everywhere as falling back to level 3 until the smaller records are implemented.
@@ -981,15 +982,28 @@ struct __attribute__((packed)) VescLogDataL4 {
     uint8_t  fm_state;             // 0=IDLE, 1=ARMED, 2=ACTIVE, 4=STOPPING, 5=RETURN
     uint8_t  fm_block_reason;      // FM_LOG_BLOCK_* below; formatter emits a stable text label
     uint8_t  fm_throttle_cap;      // actual FM cap published to PWM, 0..255
+
+    // Heading evidence audit block (2026-08-27). Appended after the original 83-byte FM audit
+    // record so both 65-byte legacy Deep logs and 83-byte FM-audit logs retain their exact layout.
+    uint16_t heading_diag_flags;         // HEADING_LOG_* raw conditions below
+    int16_t  compass_cog_diff_dx10;      // signed shortest COG-compass gap x10 deg; 0x7FFF = not comparable
+    uint16_t heading_disagree_dwell_ms;  // current set-proof progress, capped at kHeadingDisagreeMs
+    uint16_t heading_agree_dwell_ms;     // current clear-proof progress, capped at kHeadingDisagreeMs
+    uint16_t cog_last_good_age_ms;       // age of controller's last accepted live COG; 0xFFFF = none
+    uint16_t compass_snap_age_ms;        // clean compass-snapshot age; 0xFFFF = none
+    uint8_t  heading_mode;               // configured rtm_use_compass: 0=COG, 1=hybrid, 2=compass
 };
 
 // The original level-4 record ended after loop_max_ms. Keep the exact size as an explicit
 // compatibility boundary: logCsvHeaderForRecord() and logFormatCsvRow() use it to decode old files.
 #define LOG_RECORD_SIZE_L4_LEGACY 65u
+#define LOG_RECORD_SIZE_L4_FM_AUDIT 83u
 static_assert(offsetof(VescLogDataL4, fm_gate_flags) == LOG_RECORD_SIZE_L4_LEGACY,
               "The FM audit block must remain appended after the legacy 65-byte level-4 record.");
-static_assert(sizeof(VescLogDataL4) == 83,
-              "VescLogDataL4 size mismatch — expected 65 legacy bytes + 18-byte FM audit block.");
+static_assert(offsetof(VescLogDataL4, heading_diag_flags) == LOG_RECORD_SIZE_L4_FM_AUDIT,
+              "The heading audit block must remain appended after the 83-byte FM audit record.");
+static_assert(sizeof(VescLogDataL4) == 96,
+              "VescLogDataL4 size mismatch — expected 65 + 18-byte FM + 13-byte heading blocks.");
 
 // fm_gate_flags bit map. These are snapshots of the exact decisions made by runFmLoop(), not a
 // second implementation in the logger. A zero gate can mean either "failed" or "not evaluated"
@@ -1014,6 +1028,22 @@ static_assert(sizeof(VescLogDataL4) == 83,
 #define FM_LOG_GATE_RETURN_EXIT_HOLD    (1UL << 17)
 #define FM_LOG_GATE_MANUAL_STEER        (1UL << 18)
 #define FM_LOG_GATE_DIVERGENCE_FAULT    (1UL << 19)
+
+// heading_diag_flags: raw inputs and intermediate verdicts behind heading condition 6. Unlike
+// fm_heading_ok these bits do not short-circuit after an earlier FM gate, so every Deep row shows
+// why the heading ladder did or did not have a GPS-derived source.
+#define HEADING_LOG_COG_CAPTURED         (1u << 0)
+#define HEADING_LOG_COG_TIMESTAMP_FRESH (1u << 1)
+#define HEADING_LOG_COG_SPEED_OK         (1u << 2)
+#define HEADING_LOG_COG_FROZEN_MOVING    (1u << 3)
+#define HEADING_LOG_COG_LIVE_VALID       (1u << 4)
+#define HEADING_LOG_COG_HOLD_VALID       (1u << 5)
+#define HEADING_LOG_COMPASS_SNAP_FRESH   (1u << 6)
+#define HEADING_LOG_COMPASS_SNAP_USABLE  (1u << 7)
+#define HEADING_LOG_COMPARE_POSSIBLE     (1u << 8)
+#define HEADING_LOG_DISAGREE_NOW         (1u << 9)
+#define HEADING_LOG_DISAGREE_LATCHED     (1u << 10)
+#define HEADING_LOG_GPS_FIX_FRESH        (1u << 11)
 
 enum FmLogBlockReason : uint8_t {
   FM_LOG_BLOCK_NONE = 0,
@@ -1053,6 +1083,13 @@ struct FmLogDiagSnapshot {
   uint8_t  state;
   uint8_t  block_reason;
   uint8_t  throttle_cap;
+  uint16_t heading_diag_flags;
+  int16_t  compass_cog_diff_dx10;
+  uint16_t heading_disagree_dwell_ms;
+  uint16_t heading_agree_dwell_ms;
+  uint16_t cog_last_good_age_ms;
+  uint16_t compass_snap_age_ms;
+  uint8_t  heading_mode;
 };
 
 // ============================================================
@@ -1123,17 +1160,19 @@ static inline uint16_t logRecordSizeForLevel(uint8_t level)
 // ============================================================
 #define LOG_CSV_HEADER_L3 "timestamp_ms,motor_current_A,battery_current_A,duty_cycle_%,voltage_V,ERPM,temp_mos_C,fault_code,speed_kmh,latitude,longitude,datetime_unix,thr_received,rtm_source,rtm_confidence,rtm_rx_active,gps_phase_b_ok,rtm_steer_override,rtm_heading_chosen_dx10,compass_live_dx10,compass_snap_dx10,snap_age_s,gps_course_dx10,cog_age_ms_div10,heading_error_dx10,d_error_dx10,remote_error,effective_steer,tx_distance_m,rssi_dbm,snr_db"
 #define LOG_CSV_HEADER_L4_LEGACY LOG_CSV_HEADER_L3 ",gps_sent_per_s,cog_frozen_s,mux_err_cnt,loop_max_ms"
-#define LOG_CSV_HEADER_L4 LOG_CSV_HEADER_L4_LEGACY ",fm_mode,fm_state,fm_block_reason,fm_throttle_cap,fm_distance_m,fm_d_engage_m,fm_rider_speed_kmh,fm_sep_dwell_ms,fm_front_angle_deg,fm_mode_ok,fm_trigger_held,fm_gps_not_rejected,fm_phase_b_ok,fm_tx_gps_fresh,fm_rx_gps_fresh,fm_heading_ok,fm_link_ok,fm_position_ok,fm_dist_over_d_engage,fm_sep_latched,fm_return_candidate,fm_min_dist_stop,fm_heading_disagree,fm_geometry_warning,fm_front_warning,fm_can_be_active,fm_return_exit_hold,fm_manual_steer,fm_divergence_fault"
+#define LOG_CSV_HEADER_L4_FM_AUDIT LOG_CSV_HEADER_L4_LEGACY ",fm_mode,fm_state,fm_block_reason,fm_throttle_cap,fm_distance_m,fm_d_engage_m,fm_rider_speed_kmh,fm_sep_dwell_ms,fm_front_angle_deg,fm_mode_ok,fm_trigger_held,fm_gps_not_rejected,fm_phase_b_ok,fm_tx_gps_fresh,fm_rx_gps_fresh,fm_heading_ok,fm_link_ok,fm_position_ok,fm_dist_over_d_engage,fm_sep_latched,fm_return_candidate,fm_min_dist_stop,fm_heading_disagree,fm_geometry_warning,fm_front_warning,fm_can_be_active,fm_return_exit_hold,fm_manual_steer,fm_divergence_fault"
+#define LOG_CSV_HEADER_L4 LOG_CSV_HEADER_L4_FM_AUDIT ",heading_mode,compass_cog_diff_deg,heading_disagree_dwell_ms,heading_agree_dwell_ms,cog_last_good_age_ms,compass_snap_age_ms,cog_captured,cog_timestamp_fresh,cog_speed_ok,cog_frozen_moving,cog_live_valid,cog_hold_valid,compass_snap_fresh,compass_snap_usable,heading_compare_possible,heading_disagree_now,heading_disagree_latched,heading_gps_fix_fresh"
 
 #define LOG_CSV_ROW_FMT_L3 "%u,%.2f,%.2f,%d,%.1f,%d,%u,%u,%.1f,%.6f,%.6f,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%d,%d,%u,%u,%.1f,%d,%.1f"
 #define LOG_CSV_ROW_EXT_L4 ",%u,%u,%u,%u"
 #define LOG_CSV_ROW_EXT_FM ",%u,%s,%s,%u,%.1f,%.1f,%.1f,%u,%.1f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u"
+#define LOG_CSV_ROW_EXT_HEADING ",%u,%.1f,%u,%u,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u"
 
 // Row buffer size. The 31 level-3 columns need ~210 bytes normally and ~282 in the pathological
-// corrupt-coordinate case. The four legacy Deep fields plus 29 FM audit fields remain comfortably
-// below 640 bytes even with the longest state/block labels. It is a stack local in the Arduino loop
+// corrupt-coordinate case. The Deep fields plus FM and heading audit fields remain comfortably
+// below 768 bytes even with the longest state/block labels. It is a stack local in the Arduino loop
 // task (8 KB stack), which is where both readers run.
-#define LOG_CSV_ROW_BUF 640
+#define LOG_CSV_ROW_BUF 768
 
 static inline const char* fmLogStateText(uint8_t state)
 {
@@ -1180,9 +1219,9 @@ static inline const char* logCsvHeaderForRecord(uint8_t level, uint16_t record_s
   if (level < 4 || record_size < (uint16_t)LOG_RECORD_SIZE_L4_LEGACY) {
     return LOG_CSV_HEADER_L3;
   }
-  return (record_size >= (uint16_t)sizeof(VescLogDataL4))
-      ? LOG_CSV_HEADER_L4
-      : LOG_CSV_HEADER_L4_LEGACY;
+  if (record_size >= (uint16_t)sizeof(VescLogDataL4)) return LOG_CSV_HEADER_L4;
+  if (record_size >= (uint16_t)LOG_RECORD_SIZE_L4_FM_AUDIT) return LOG_CSV_HEADER_L4_FM_AUDIT;
+  return LOG_CSV_HEADER_L4_LEGACY;
 }
 
 // ============================================================
@@ -1275,7 +1314,7 @@ static int logFormatCsvRow(char* out, size_t out_len, const uint8_t* rec_bytes, 
       if ((size_t)n >= out_len) n = (int)out_len - 1;
     }
 
-    if (rec_size >= (uint16_t)sizeof(VescLogDataL4) && (size_t)n < (out_len - 1))
+    if (rec_size >= (uint16_t)LOG_RECORD_SIZE_L4_FM_AUDIT && (size_t)n < (out_len - 1))
     {
       uint32_t g = d4.fm_gate_flags;
       int m2 = snprintf(out + n, out_len - (size_t)n, LOG_CSV_ROW_EXT_FM,
@@ -1311,6 +1350,38 @@ static int logFormatCsvRow(char* out, size_t out_len, const uint8_t* rec_bytes, 
       if (m2 > 0)
       {
         n += m2;
+        if ((size_t)n >= out_len) n = (int)out_len - 1;
+      }
+    }
+
+    if (rec_size >= (uint16_t)sizeof(VescLogDataL4) && (size_t)n < (out_len - 1))
+    {
+      uint16_t h = d4.heading_diag_flags;
+      int m3 = snprintf(out + n, out_len - (size_t)n, LOG_CSV_ROW_EXT_HEADING,
+                        (unsigned)d4.heading_mode,
+                        (d4.compass_cog_diff_dx10 == 0x7FFF)
+                            ? -999.0f : (d4.compass_cog_diff_dx10 / 10.0f),
+                        (unsigned)d4.heading_disagree_dwell_ms,
+                        (unsigned)d4.heading_agree_dwell_ms,
+                        (d4.cog_last_good_age_ms == 0xFFFF)
+                            ? -1 : (int)d4.cog_last_good_age_ms,
+                        (d4.compass_snap_age_ms == 0xFFFF)
+                            ? -1 : (int)d4.compass_snap_age_ms,
+                        (unsigned)((h & HEADING_LOG_COG_CAPTURED) != 0),
+                        (unsigned)((h & HEADING_LOG_COG_TIMESTAMP_FRESH) != 0),
+                        (unsigned)((h & HEADING_LOG_COG_SPEED_OK) != 0),
+                        (unsigned)((h & HEADING_LOG_COG_FROZEN_MOVING) != 0),
+                        (unsigned)((h & HEADING_LOG_COG_LIVE_VALID) != 0),
+                        (unsigned)((h & HEADING_LOG_COG_HOLD_VALID) != 0),
+                        (unsigned)((h & HEADING_LOG_COMPASS_SNAP_FRESH) != 0),
+                        (unsigned)((h & HEADING_LOG_COMPASS_SNAP_USABLE) != 0),
+                        (unsigned)((h & HEADING_LOG_COMPARE_POSSIBLE) != 0),
+                        (unsigned)((h & HEADING_LOG_DISAGREE_NOW) != 0),
+                        (unsigned)((h & HEADING_LOG_DISAGREE_LATCHED) != 0),
+                        (unsigned)((h & HEADING_LOG_GPS_FIX_FRESH) != 0));
+      if (m3 > 0)
+      {
+        n += m3;
         if ((size_t)n >= out_len) n = (int)out_len - 1;
       }
     }

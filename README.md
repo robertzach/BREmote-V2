@@ -855,7 +855,7 @@ The data logger is the primary tool for validating and tuning the FM/FM_RETURN s
 **Storage note:** if SPIFFS fills too quickly during long sessions, lower the rate with `?lograte`, **don't trim columns** — every diagnostic field is there to make the controller observable when something goes wrong, and the cost of dropping them is much greater than the storage savings.
 
 **Key columns for steering tuning:** level 3 contains 31 columns; current level 4 (`log_level=4`)
-contains 64 columns after appending the four GPS/loop diagnostics and the 29-column FM engage audit.
+contains 82 columns after appending GPS/loop diagnostics plus the FM engage and heading-evidence audits.
 
 > The last five — `remote_error`, `effective_steer`, `tx_distance_m`, `rssi_dbm`, `snr_db` — were added in the 2026-07-19 and 2026-07-24 updates. `rssi_dbm` / `snr_db` are the LoRa link quality measured **at the RX for the packets the TX sent**, i.e. the *command* link, which is the direction that matters for control. `-999` / `-99.0` / `-1.0` are the "no data" sentinels.
 
@@ -866,9 +866,13 @@ For Follow-Me engage diagnosis, select `log_level=4`. The most useful appended c
 link, trigger and position gate. `fm_block_reason` is already decoded as text such as
 `below_d_engage`, `separation_dwell`, `return_candidate`, `no_heading` or `link`; no bit-mask
 decoding is required. Existing 65-byte Deep log files retain their original 35-column export.
+Existing 83-byte FM-audit files retain their 64-column export. New 96-byte files additionally show
+`heading_mode`, `compass_cog_diff_deg`, both disagreement dwell timers, COG/snapshot ages and raw
+`cog_*` / `heading_*` validity flags. These columns distinguish a missing, stale, too-slow or frozen
+COG from an active COG hold and from a real compass disagreement.
 
 <details>
-<summary><strong>Click to expand: Full log column reference (14 fields with tuning relevance)</strong></summary>
+<summary><strong>Click to expand: Log columns with FM/heading tuning relevance</strong></summary>
 
 <br>
 
@@ -878,7 +882,7 @@ decoding is required. Existing 65-byte Deep log files retain their original 35-c
 | `speed_kmh` | RX GPS speed (km/h) | Confirms whether buggy is moving fast enough for GPS COG to be primary heading source |
 | `latitude` / `longitude` | RX position | Plot the actual path; visual sanity-check |
 | `thr_received` | Final throttle command (0–254) | What the user requested vs what FM allowed |
-| `rtm_source` | Heading source picked: 0=GPS COG, 1=GPS COG fresh, 2=compass snapshot, 3=no data | Confirms layered logic chose the right source at each moment |
+| `rtm_source` | Heading source picked: 0=none, 1=GPS COG, 2=compass snapshot, 3=live compass | Confirms layered logic chose the right source at each moment |
 | `rtm_confidence` | 3=HIGH, 2=MED, 1=LOW, 0=none | Modifier on steering authority |
 | `rtm_rx_active` | Retired compatibility column; always 0 | Preserves the historical CSV schema |
 | `rtm_steer_override` | Final steering output (127 = straight) | What the buggy was told to do |
@@ -886,6 +890,10 @@ decoding is required. Existing 65-byte Deep log files retain their original 35-c
 | `gps_course_dx10` | Raw GPS COG (0.1° units) | Independent reference for direction-of-travel |
 | `compass_live_dx10` | Live compass (0.1° units) | Independent reference; diverges from GPS COG under motor EMI |
 | `cog_age_ms_div10` | GPS COG freshness (10 ms units, ≤150 = fresh) | Confirms COG didn't go stale |
+| `fm_state` / `fm_block_reason` | Exact FM lifecycle state and first effective blocker | Explains why an engage did or did not occur without reconstructing short-circuit order |
+| `cog_live_valid` / `cog_hold_valid` / `cog_frozen_moving` | GPS heading ladder verdicts | Distinguishes live COG, the dropout bridge and a rejected frozen course |
+| `compass_cog_diff_deg` / `heading_compare_possible` / `heading_disagree_now` | Signed source difference and whether it was measurable/failing now | Shows whether a large raw difference was actually eligible evidence |
+| `heading_disagree_dwell_ms` / `heading_agree_dwell_ms` / `heading_disagree_latched` | Set/clear proof progress and persisted verdict | Shows exactly when the compass withdrawal was building, standing or clearing |
 | **`heading_error_dx10`** | Bearing-to-target − current-heading (0.1° units; 32767 = no data) | **Primary tuning signal — magnitude and oscillation visible here** |
 | **`d_error_dx10`** | Rate-of-change of heading error (0.1°/sec) | **Kd tuning signal — high during settling = need more damping** |
 | `motor_current_A`, `voltage_V`, `ERPM` | VESC telemetry | Power/load context; correlates compass EMI with current draw |

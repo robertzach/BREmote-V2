@@ -36,9 +36,9 @@ The change applies immediately and lasts until reboot (then back to the 3 Hz def
 
 ## Capacity — record size and duration
 
-- **Developer record = 59 bytes. Deep record = 83 bytes.** Deep appends GPS/loop diagnostics and
-  the Follow-Me engage-audit snapshot. Old 65-byte Deep records remain readable because every file
-  stores its own record size in the BRLG header.
+- **Developer record = 59 bytes. Deep record = 96 bytes.** Deep appends GPS/loop diagnostics,
+  the Follow-Me engage audit and the heading-evidence audit. Old 65-byte and 83-byte Deep records
+  remain readable because every file stores its own record size in the BRLG header.
 - **SPIFFS partition = 1.875 MB** (`0x1E0000`) on the custom no-OTA 4 MB partition table
   (`Source/V2_Integration_Rx/partitions.csv`: 2.0 MB app + 1.875 MB SPIFFS).
 - Durations below are continuous single-file logging on a freshly formatted SPIFFS, accounting for
@@ -48,14 +48,16 @@ Approximate Deep-log capacity after the logger's 500 KB free-space reserve:
 
 | Rate | Deep bytes/hour | Approx. continuous Deep logging |
 |---|---:|---:|
-| 5 Hz | ~1.49 MB/hr | ~1.0 hr |
-| **3 Hz (default)** | ~0.90 MB/hr | **~1.6 hr** |
-| 2 Hz | ~0.60 MB/hr | ~2.4 hr |
-| 1 Hz | ~0.30 MB/hr | ~4.8 hr |
+| 5 Hz | ~1.73 MB/hr | ~0.8 hr |
+| **3 Hz (default)** | ~1.04 MB/hr | **~1.4 hr** |
+| 2 Hz | ~0.69 MB/hr | ~2.1 hr |
+| 1 Hz | ~0.35 MB/hr | ~4.2 hr |
 
 For an engage investigation use `?set log_level 4`, save the configuration, and start a new log
 file. The appended `fm_block_reason` column gives the primary reason directly; the adjacent gate
-columns preserve the complete decision for cross-checking.
+columns preserve the complete decision for cross-checking. The heading-evidence columns then show
+whether COG was captured, fresh, fast enough, frozen, live or held; whether the compass snapshot
+was comparable; the signed source difference; and the disagreement set/clear dwell progress.
 
 - **Resilience:** each session is its own file, and `ensureFreeSpace()` rolls off the **oldest** log
   when SPIFFS fills while protecting the active file — so a full session always fits; only old
