@@ -125,9 +125,11 @@ your direction of travel):
 
 F4–F6 use the same **radial** `>D_engage` 2-second proof as F1–F3. They may therefore drive from behind
 toward their forward targets; there is no no-autonomous-overtake guarantee. Signed front lead and
-error from the selected front axis are warning-only. If the front position is lost, one medium warning repeats
-every 3 seconds—even with the trigger released—but steering, throttle cap, state and separation proof
-continue unchanged.
+error from the selected front axis still do not gate steering, state or the separation proof. They do
+determine the speed phase: only a valid measurement showing the buggy more than one control band
+behind its requested station grants V-Max catch-up. If the front position is lost, one medium warning
+repeats every 3 seconds—even with the trigger released—and the speed governor falls back to its normal
+rider-relative target instead of granting V-Max catch-up.
 
 The exact diagonal angle is set by **`near_diag_offset_deg`**. F1/F3 apply it from straight behind;
 F4/F6 apply it from straight ahead. F5 stays at zero offset:
@@ -230,7 +232,7 @@ fault while you're holding the trigger. A stop after you've already let go just 
 | `near_diag_offset_deg` | diagonal angle for F1/F3 and F4/F6 (see §5) | **45°**; F5 ignores it |
 | `min_dist_m` | ACTIVE hard-stop distance | cap 0 latches until trigger release; release clears separation proof |
 | `followme_smoothing_band_m` | decel band above the hard stop | follow distance = `min_dist_m` + this |
-| `boogie_vmax_in_followme_kmh` | absolute speed ceiling while following | 0 = no absolute ceiling; F4–F6 still regulate longitudinal front gap relative to rider speed |
+| `boogie_vmax_in_followme_kmh` | F1–F6 catch-up target and in-band speed ceiling | 0 opens the speed cap only until the applicable distance-control band is reached; in-band rider-relative regulation remains active |
 | `fm_arm_window_s` *(TX)* | how long an arm survives with no throttle | **180 s** |
 | `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
