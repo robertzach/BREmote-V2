@@ -1,6 +1,6 @@
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering config without a version bump: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct (20-100%, default 35), and rsvd_u16_1 renamed in place to steer_reduction_start_pct (30-80%, default 50). cfgValidateCrossField() recognises legacy/invalid values and promotes them before field validation. Offsets/types/sizeof stay unchanged at 192 bytes; SW_VERSION remains 35.
 // V2.5-Evo - 2026-08-27 - rsvd_f32_1 renamed in place to fm_diverge_dist_m. Explicit values are absolute metres, raised to at least 2 x effective D_engage and capped at 100 m. 0 preserves existing SW35 configs by deriving the old 6 x D_engage limit before applying the 100 m cap. Same float/offset/sizeof, SW_VERSION stays 35 and no config wipe occurs.
-// V2.5-Evo - 2026-08-25 - Follow-Me mode validation extended 0-3 -> 0-4 for F4 In Front. Range only; no confStruct/SW_VERSION change.
+// V2.5-Evo - 2026-08-27 - Follow-Me validation extended 0-4 -> 0-6 for F4 Front-Left, F5 Front and F6 Front-Right. Range only; no confStruct/SW_VERSION change.
 // RX-specific config field table and cross-validation.
 // Shared engine is in ../Common/ConfigServiceEngine.h (included via BREmote_V2_Rx.h).
 // V2.5-Evo - 2026-04-22 - Added gps_chip_type field (GPS module selector: 0=BN-220, 1=BN-880+compass, 2=M10, 3=M10+compass)
@@ -46,7 +46,7 @@ const CfgFieldSpec kCfgFields[] = {
   {"rtm_steer_response", CFG_U16, offsetof(confStruct, rtm_steer_response), true, false, true, 0.0f, 4.0f, 0, false},
   {"data_src", CFG_U16, offsetof(confStruct, data_src), true, false, true, 0.0f, 2.0f, 0, false},
   {"gps_en", CFG_U16, offsetof(confStruct, gps_en), true, false, true, 0.0f, 1.0f, 0, false},
-  {"followme_mode", CFG_U16, offsetof(confStruct, followme_mode), true, false, true, 0.0f, 4.0f, 0, false},
+  {"followme_mode", CFG_U16, offsetof(confStruct, followme_mode), true, false, true, 0.0f, 6.0f, 0, false},
   {"kalman_en", CFG_U16, offsetof(confStruct, kalman_en), true, false, true, 0.0f, 1.0f, 0, false},
   {"boogie_vmax_in_followme_kmh", CFG_FLOAT, offsetof(confStruct, boogie_vmax_in_followme_kmh), true, false, true, 0.0f, 100.0f, 1, false},
   {"min_dist_m", CFG_FLOAT, offsetof(confStruct, min_dist_m), true, false, true, 0.0f, 1000.0f, 1, false},

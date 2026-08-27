@@ -333,7 +333,7 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | `followme_smoothing_band_m` | **10 m** | Decel band above the hard stop (follow distance = min_dist_m + band) |
 | `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | FM speed ceiling |
 | `fm_diverge_dist_m` | **100 m default; tune lower deliberately** | Absolute sustained-divergence ceiling; firmware raises it to at least `2 × effective D_engage` and never permits more than 100 m |
-| `followme_mode` | **2 = Behind** (shipped default) | Pick the geometry and confirm it on the display — F1/F2/F3/F4 |
+| `followme_mode` | **2 = Behind** (shipped default) | Pick the geometry and confirm it on the display — F1–F6 |
 | GPS anti-spoof (Phase A/B) | leave defaults: HDOP 2.0, accel 3.0 G, teleport 80 km/h, suspect 3, pair-dist 500 m, speed-diff 50 km/h | Tuned for this craft; only widen with reason |
 | `gps_dyn_model` | **0 (Sea)** — unless your water is above ~500 m altitude, then **4 (Automotive)** | The Sea navigation model has a 500 m ceiling and good fixes start being rejected above it. Sea is the better model below that, so leave it at 0 |
 | `rtm_compass_required` | 1 | Require a valid heading source for FM_RETURN (historical key name) |
@@ -349,15 +349,17 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 > | **1** | **Near Right** | behind and to your right |
 > | **2** | **Behind** | directly behind you — **shipped default** |
 > | **3** | **Near Left** | behind and to your left |
-> | **4** | **In Front** | forward pacer — experimental; radial activation like F1–F3 |
+> | **4** | **Front-Left** | forward-left pacer — experimental |
+> | **5** | **Front** | forward pacer directly ahead — experimental |
+> | **6** | **Front-Right** | forward-right pacer — experimental |
 >
-> F4 accepts `boogie_vmax_in_followme_kmh=0`; this removes the absolute vehicle-speed ceiling but
+> F4–F6 accept `boogie_vmax_in_followme_kmh=0`; this removes the absolute vehicle-speed ceiling but
 > keeps the rider-relative front-gap governor active. Start with a finite, low ceiling for controlled
-> validation whenever possible. F4 may autonomously travel from behind toward its forward target;
+> validation whenever possible. F4–F6 may autonomously travel from behind toward their forward targets;
 > front-cone/lead limits now produce warnings only.
 >
 > `0` disables Follow-Me. Set the geometry you want, then confirm it on the TX display:
-> **F1 / F2 / F3 / F4**.
+> **F1–F6**.
 >
 
 ### Tweak-later-OK *(safe to adjust after first sessions)* — [WEB-PORTAL, tweak-later-OK]
@@ -413,7 +415,7 @@ chop, one-handed, with a foil under you. Learn them dry first.
 
 Confirm the gestures and display before you're in the water:
 
-- **Arm FM (toggle, works while floating):** **LEFT tap → RIGHT hold ~3 s.** Display shows **F1/F2/F3/F4**, remote buzzes **two quick taps** = armed. Repeat the gesture to cycle **F1→F2→F3→F4→F0-off** before you're on the throttle.
+- **Arm FM (toggle, works while floating):** **LEFT tap → RIGHT hold ~3 s.** Display shows **F1–F6**, remote buzzes **two quick taps** = armed. Repeat the gesture to cycle **F1→F2→F3→F4→F5→F6→F0-off** before you're on the throttle.
 - **Arm FM (magnet, works during the tow — if fitted):** hold magnet ~2 s, feel one pulse, pull away → two taps = armed (toggle: same gesture disarms).
 - **Former RTM gesture:** RIGHT tap → LEFT hold has no autonomous action. Return now starts automatically inside an armed FM session.
 - **Reading the FM bar:** no bar = disarmed · **sweeping** = armed & ready · **blinking in place** = armed but not ready · **steady distance bar** = following · **`rE` + full blinking bar** = returning · **`Id`** = legacy-RX completion only · **`St`** = stopped.
@@ -434,11 +436,11 @@ Confirm the gestures and display before you're in the water:
 Preconditions to *engage* (you can arm before these are perfect; it won't engage until they're met): paired, **GPS fix on both** units, healthy radio + telemetry, calibrated compass.
 
 1. **Float & arm** (toggle: LEFT tap → RIGHT hold; or magnet mid-tow). Two taps = armed. The arm survives up to `fm_arm_window_s` (180 s) with no throttle.
-2. **Whip / separate**, throttle held. Every F1–F4 mode **engages on radial separation only** — beyond `D_engage` for **2 continuous seconds**, confirmed by both GPS units. Side/front angles are not gates.
+2. **Whip / separate**, throttle held. Every F1–F6 mode **engages on radial separation only** — beyond `D_engage` for **2 continuous seconds**, confirmed by both GPS units. Side/front angles are not gates.
    - Two ways to separate: whip yourself past the buggy, or keep throttle and steer the buggy to its offset side so it peels off while you carry into the wave.
 3. **Following:** the buggy trails at your set side/distance, steering itself. You keep the throttle held; the buggy only ever moves on **your** throttle and only *subtracts* from it.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
-4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F4 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
+4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F6 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
 5. **Geometry/front invalid →** warning every 3 s only; control continues unchanged. **At `min_dist_m` →** cap 0 remains latched until you release the trigger; release restores manual throttle and demands a fresh radial `>D_engage` proof before automatic FM resumes. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
 > Before starting a new tow, explicitly disarm FM or select F0. A min-distance stop release clears

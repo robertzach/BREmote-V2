@@ -66,7 +66,7 @@ by follow distance: the buggy only moves when the foiler is beyond the minimum f
 distance, and throttle ramps gradually to avoid sudden engagement.
 
 *Note: FM autonomous steering and GPS following are not yet implemented in firmware.
-The current code supports FM mode selection (F0-F3) via gesture and displays the R5
+The current code supports FM mode selection (F0-F6) via gesture and displays the R5
 proximity bar. Full autonomous FM following is Priority 9 (future work).*
 
 **Throttle model (non-negotiable safety rule):**

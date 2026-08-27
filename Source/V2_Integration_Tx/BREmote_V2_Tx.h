@@ -255,7 +255,7 @@ struct confStruct {
 
     // GPS features related flags
     uint16_t gps_en;           // GPS runtime enable flag (0=disabled, 1=enabled)
-    uint16_t followme_mode; // Follow-me runtime mode flag (0=off, 1=near_right, 2=behind, 3=near_left, 4=in_front)
+    uint16_t followme_mode; // 0=off, 1=rear-right, 2=behind, 3=rear-left, 4=front-left, 5=front, 6=front-right
     uint16_t kalman_en;        // Kalman filter runtime enable flag (0=disabled, 1=enabled)
     uint16_t speed_src;   // 0=RX km/h, 1=RX knots, 2=TX km/h, 3=TX knots, 4=RX mph, 5=TX mph
     
@@ -439,7 +439,7 @@ confStruct defaultConf = {  // V2.5-Evo — factory default configuration
   0,             // gps_dyn_model (was steer_expo1; 0 = default = Sea, unchanged behaviour)
   0.000185662f,  // ubat_cal
   1,             // gps_en (1 = TX GPS enabled)
-  2,             // followme_mode (2 = Behind default; 1=near_right, 3=near_left, 4=in_front)
+  2,             // followme_mode (2=Behind default; 1=rear-right, 3=rear-left, 4=front-left, 5=front, 6=front-right)
   1,             // kalman_en
   5,             // speed_src (5 = TX mph)
   3000,          // tx_gps_stale_timeout_ms
@@ -522,7 +522,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t fm_status = 0;            // index 15 — [7]=aux2 [6]=aux1 [5]=VESC [4]=wet [3:2]=heading conf [1]=FM_RETURN [0]=FM steering active
     uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state from the RX FM brain.
                                       //   [0]=armed [1]=engaged [2]=not-ready [3]=fault [4]=FM_RETURN
-                                      //   [5]=legacy done/reserved [6]=geometry warning [7]=F4-front warning.
+                                      //   [5]=legacy done/reserved [6]=geometry warning [7]=F4-F6 front warning.
                                       //   V2.5-Evo - 2026-07-20 - Batch T: repurposed the unused reserved_tx_imu byte (was 0xFF).
                                       //   Default 0 (not 0xFF) so that before any RX packet arrives no FM bit reads as set — matches
                                       //   the RX-side default. Written by the generic index-addressed telemetry unpack in Radio.ino.
@@ -542,7 +542,7 @@ struct __attribute__((packed)) TelemetryPacket {
 #define FM_FLAG_RETURN    0x10  // bit4: RX is in FM_RETURN (trigger may currently pause motion)
 #define FM_FLAG_DONE      0x20  // bit5: legacy RX RETURN->IDLE completion; retained for old-RX compatibility
 #define FM_FLAG_GEOMETRY  0x40  // bit6: radial/separation warning only; RX control is unchanged
-#define FM_FLAG_FRONT_LOST 0x80 // bit7: F4 front-position warning only; RX control is unchanged
+#define FM_FLAG_FRONT_LOST 0x80 // bit7: F4-F6 front-position warning only; RX control is unchanged
 // Link-health window: the TX treats the RX link as alive only while a packet has landed within
 // this many ms (matches the existing `millis()-last_packet < 1000` failsafe window used for the
 // bargraphs/vibration connectivity checks). Used by the FM readiness OR and the engaged gate.
@@ -668,7 +668,7 @@ volatile uint8_t steer_sent = 0; // Steering value actually sent over radio
 // reordering; std::atomic release/acquire prevents sendData from observing count>0
 // while type/value are still stale in the loop task's store buffer.
 std::atomic<uint8_t> rtm_meta_type  {0};    // 0xF2=FM declaration, 0xF4=aux control; 0xF1 remains reserved
-std::atomic<uint8_t> rtm_meta_value {0};    // for 0xF2: 0-4 FM mode; for 0xF4: aux flags byte
+std::atomic<uint8_t> rtm_meta_value {0};    // for 0xF2: 0-6 FM mode; for 0xF4: aux flags byte
 std::atomic<uint8_t> rtm_meta_count {0};    // bursts remaining; 0 = idle (value is always 0 or 3)
 
 //-1 = left, 1 = right input

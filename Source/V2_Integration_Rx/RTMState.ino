@@ -2,11 +2,12 @@
 // V2.5-Evo - 2026-08-27 - A proven compass-vs-COG disagreement no longer blocks or aborts Follow-Me. The disagreement still latches and withdraws the compass, but live GPS COG and the short held-COG bridge remain valid FM heading sources. Per-tick disagreement no longer vetoes that valid COG. FM still requires an actual heading: no/stale/frozen COG while the compass is withdrawn remains a condition-6 failure. Telemetry and serial diagnostics now report GPS-only degradation instead of "will not engage". No config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - FM divergence ceiling is now configurable as the absolute-metre fm_diverge_dist_m. Its effective value is never below 2 x D_engage and never above 100 m. The setting claims the existing final reserved float without changing layout or SW_VERSION; 0 reconstructs the old 6 x D_engage behavior and applies the new 100 m cap for existing SW35 configs. Dwell, closure epsilon, engage grace and fault path are unchanged.
 // V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
-// V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F4 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
-// V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival below effective D_engage and a moving-rider cancellation preserve the live F1-F4 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
-// V2.5-Evo - 2026-08-26 - FM_RETURN replaces the separately armed RTM product mode. Any live F1-F4 declaration can enter FM_RETURN after fresh/plausible TX+RX positions show the foiler below 2 km/h and radially beyond effective D_engage for 2 s, including stationary arming before a tow. FM_RETURN holds still for that proof dwell, then uses the shared direct-to-rider RTM steering/align/speed-governor control under the unchanged trigger deadman. [SUPERSEDED 2026-08-27: normal RETURN exits now preserve the declaration and enter FM_ARMED as described above; the completion-bit/IDLE handshake was removed.]
+// V2.5-Evo - 2026-08-27 - Front geometry expanded to F4 Front-Left, F5 Front and F6 Front-Right. F4/F6 reuse near_diag_offset_deg on the same min_dist+band station radius; their longitudinal speed-governor target is the cosine component of that radius. Target-axis loss remains warning-only. Mode/radio/config ranges are 0-6; packet and confStruct layouts are unchanged, so SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F6 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
+// V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival below effective D_engage and a moving-rider cancellation preserve the live F1-F6 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
+// V2.5-Evo - 2026-08-26 - FM_RETURN replaces the separately armed RTM product mode. Any live F1-F6 declaration can enter FM_RETURN after fresh/plausible TX+RX positions show the foiler below 2 km/h and radially beyond effective D_engage for 2 s, including stationary arming before a tow. FM_RETURN holds still for that proof dwell, then uses the shared direct-to-rider RTM steering/align/speed-governor control under the unchanged trigger deadman. [SUPERSEDED 2026-08-27: normal RETURN exits now preserve the declaration and enter FM_ARMED as described above; the completion-bit/IDLE handshake was removed.]
 // V2.5-Evo - 2026-08-26 - [SUPERSEDED later the same day] The stationary-near separation reset described here was replaced by the deterministic min-distance stop/release rule above. FM_RETURN still uses the fixed <2 km/h, >D_engage, 2 s proof. [SUPERSEDED 2026-08-27: normal RETURN exits now enter FM_ARMED.]
-// V2.5-Evo - 2026-08-26 - FM rider-override semantics changed. Releasing the trigger remains the immediate physical deadman stop without directly ending the FM lifecycle. The TX keeps declaring the selected FM mode until explicit FM/F0 disarm, pre-throttle arm-window expiry, fault or declaration loss. Manual steering outside kFmManualSteerDeadband wins at PWM cadence without steer-cancelling FM or clearing its latch; centring hands steering back to FM, and divergence proof is parked during deliberate manual deflection. Genuine GPS/link/heading/divergence faults remain safety stops; F4 front loss is warning-only per the newer rule above. No config/packet/struct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-26 - FM rider-override semantics changed. Releasing the trigger remains the immediate physical deadman stop without directly ending the FM lifecycle. The TX keeps declaring the selected FM mode until explicit FM/F0 disarm, pre-throttle arm-window expiry, fault or declaration loss. Manual steering outside kFmManualSteerDeadband wins at PWM cadence without steer-cancelling FM or clearing its latch; centring hands steering back to FM, and divergence proof is parked during deliberate manual deflection. Genuine GPS/link/heading/divergence faults remain safety stops; front-position loss is warning-only per the newer rule above. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - F4 now accepts boogie_vmax_in_followme_kmh=0 with the same documented meaning as the other Follow-Me modes: no absolute vehicle-speed ceiling. The signed front-gap governor remains active and still targets rider speed +/- the existing closing margin; only the final absolute clamp is skipped. [Later the same day: the front cone became warning-only per line 1.] No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - F4 IN FRONT added as a forward-pacer Follow-Me geometry. [SUPERSEDED 2026-08-26: its activation proof is now the same radial >D_engage dwell as F1-F3, so it may autonomously move from behind to the front target; the front cone/loss is warning-only and never clears the latch or changes cap/steering authority. The original zero-vmax refusal is also superseded: zero means no absolute ceiling.] No new packet, config field or confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - RX FM HOLD manual-recovery delay reduced 10 -> 2 s. [SUPERSEDED 2026-08-26/27: FM_HOLD was removed; ordinary release remains FM_ACTIVE and preserves proof, while release of a min-distance stop clears its proof immediately.] Compile-time timing change only; no confStruct change; SW_VERSION stays 35.
@@ -1281,10 +1282,10 @@ static const float    kFmCourseValidSpeedKmh = 5.0f;   // km/h
 // Feeds throttle cap 3 (speed governor): target = min(boogie_vmax, rider_speed + this).
 static const float    kFmClosingMarginKmh    = 10.0f;  // km/h
 
-// Stateful F1-F4 speed governor. The old stateless law multiplied the available throttle by
+// Stateful F1-F6 speed governor. The old stateless law multiplied the available throttle by
 // (1 - speed/target), which made the cap zero AT the requested speed and therefore guaranteed a
 // steady-state speed below the target. This PI controller instead learns the cap needed to hold the
-// target. GPS speed and the F4 gap-derived target are filtered independently; the small deadband
+// target. GPS speed and the F4-F6 gap-derived target are filtered independently; the small deadband
 // rejects speed quantisation. Cap removal is deliberately faster than cap restoration.
 static const float    kFmSpeedFilterTauS          = 0.75f;
 static const float    kFmSpeedTargetFilterTauS    = 1.00f;
@@ -1433,7 +1434,7 @@ static const float    kFmDivergeCloseEpsM    = 2.0f;   // metres of closure over
 // ---- FM state machine (DESIGN_FOLLOW_ME.md section 4) ----
 //   FM_IDLE    : FM off (mode 0), RTM owns the buggy, or GPS/FM disabled.
 //                No throttle cap (255) and no steering override - fully manual buggy.
-//   FM_ARMED   : a mode (1-4) is selected and all monitoring runs, but FM has not engaged
+//   FM_ARMED   : a mode (1-6) is selected and all monitoring runs, but FM has not engaged
 //                yet. The throttle chain is INACTIVE (cap 255) so the rider still has full
 //                manual control of the buggy while FM waits for the follow geometry.
 //   FM_ACTIVE  : FM has engaged at least once and owns the session until FM_RETURN, explicit disarm
@@ -1483,7 +1484,7 @@ static unsigned long fm_prev_filt_ms     = 0;
 static float         fm_rider_course_deg = -1.0f;  // 0-360 deg clockwise from North, or -1 = invalid
 static float         fm_rider_speed_kmh  = 0.0f;   // km/h
 
-// F1-F4 speed-governor memory. Updated only on a fresh accepted RX GPS-speed sample, so the 10 Hz
+// F1-F6 speed-governor memory. Updated only on a fresh accepted RX GPS-speed sample, so the 10 Hz
 // navigation loop cannot integrate the same measurement repeatedly. The integrator starts open at
 // 255; the independent engage ramp still provides the safe 0->full activation edge.
 static bool          fm_speed_gov_init             = false;
@@ -1495,6 +1496,11 @@ static float         fm_speed_integrator           = 255.0f;
 static float         fm_speed_cap_slewed            = 255.0f;
 static bool          fm_speed_other_cap_active     = false;
 
+// Last valid F1-F6 station used by the active controller. Changing station while FM_ACTIVE can
+// move the target across the rider (especially F4 <-> F6), so the next control tick deliberately
+// re-enters through the ordinary steering reset and 0->full throttle engage ramp.
+static uint8_t       fm_control_mode                = 0xFF;
+
 // Side-zone Schmitt state: true = apply the diagonal offset, false = sit directly behind.
 static bool          fm_diagonal_engaged = false;
 
@@ -1502,7 +1508,7 @@ static bool          fm_diagonal_engaged = false;
 static unsigned long fm_engage_ms        = 0;
 
 // ---- Separation latch state (V2.5-Evo - 2026-07-20) ----
-// True after every F1-F4 mode has proven radial dist > D_engage for kFmSepDwellMs while the trigger
+// True after every F1-F6 mode has proven radial dist > D_engage for kFmSepDwellMs while the trigger
 // is held. It is not changed by side/front geometry or an ordinary trigger release. Reaching
 // min_dist_m creates a separate hard-stop latch; releasing the trigger after that stop clears both
 // latches, so automatic control cannot resume until radial separation is proven again. IDLE/fault
@@ -1520,7 +1526,7 @@ static bool          fm_min_dist_stop_latched = false;
 
 // ---- FM_RETURN lifecycle ----
 // The candidate proof is deliberately separate from fm_sep_latched: RETURN is trigger-independent,
-// while normal F1-F4 engagement proof requires the trigger. Both use radial D_engage because RETURN
+// while normal F1-F6 engagement proof requires the trigger. Both use radial D_engage because RETURN
 // aims directly at a stationary rider and rider-relative course geometry is undefined at rest.
 static unsigned long fm_return_candidate_since_ms = 0;
 static unsigned long fm_return_start_ms            = 0;
@@ -1528,7 +1534,7 @@ static unsigned long fm_return_resume_since_ms     = 0;
 static unsigned long fm_return_check_ms            = 0;
 static float         fm_return_prev_dist_m         = -1.0f;
 
-// Both normal RETURN exits lead to FM_ARMED and preserve the live F1-F4 declaration. If the trigger
+// Both normal RETURN exits lead to FM_ARMED and preserve the live F1-F6 declaration. If the trigger
 // is still held at that edge, ARMED/manual throttle must remain inhibited until one release;
 // otherwise changing cap 0 -> 255 could make the buggy surge at the rider. This interlock is not an
 // FM lifecycle state and never restores the cleared separation proof.
@@ -1548,7 +1554,7 @@ static unsigned long fm_fault_alarm_ms   = 0;
 // states: clearing the geometry restores the same FM_ACTIVE session. The TX repeats one medium
 // warning pulse every three seconds while either flag is present, even with the trigger released.
 static bool          fm_geometry_warning = false;  // bit6: radial/separation geometry warning only
-static bool          fm_front_warning    = false;  // bit7: F4 front-position warning only
+static bool          fm_front_warning    = false;  // bit7: F4-F6 front-position warning only
 
 // ---- Level-4 Follow-Me engage diagnostics ----
 // runFmLoop() publishes one coherent snapshot on every 10 Hz control tick. The logger task only
@@ -1934,7 +1940,7 @@ void runFmNavigationLoop()
   }
 
   // fm_flags: [0] armed [1] driving [2] not-ready [3] fault [4] return [5] reserved legacy done
-  //           [6] radial/separation warning [7] F4 front-position warning (both warning-only).
+  //           [6] radial/separation warning [7] F4-F6 front-position warning (both warning-only).
   {
     uint8_t f = 0;
     FmState s = fm_state;
@@ -2055,19 +2061,44 @@ static float fmAngleDiff(float a, float b)
 }
 
 // ------------------------------------------------------------
-// fmFrontGeometry - rider-relative position for mode 4 (In Front)
+// Front-mode helpers - F4 Front-Left, F5 Front, F6 Front-Right
+// ------------------------------------------------------------
+// Front modes reuse near_diag_offset_deg so no config field or packet change is needed. The stored
+// field historically accepts values through 180 degrees for F1/F3; clamp only the front-mode use
+// below 90 degrees so a mode named "Front" can never place its station behind the rider.
+// In the clockwise-from-North bearing convention, negative is rider-left and positive rider-right.
+// ------------------------------------------------------------
+static bool fmIsFrontMode(uint8_t mode)
+{
+  return followMeIsFrontMode(mode);
+}
+
+static float fmFrontTargetOffsetDeg(uint8_t mode)
+{
+  return followMeFrontOffsetDeg(mode, (float)usrConf.near_diag_offset_deg);
+}
+
+static float fmFrontTargetAlongM(float d_follow, uint8_t mode)
+{
+  FollowMeFrontStation station = followMeFrontStation(
+      d_follow, mode, (float)usrConf.near_diag_offset_deg);
+  return (station.along_m > 0.0f) ? station.along_m : 0.0f;
+}
+
+// ------------------------------------------------------------
+// fmFrontGeometry - rider-relative position for modes 4-6
 // ------------------------------------------------------------
 // Projects the rider->buggy vector onto the rider's course axis. A positive along-track value
 // means the buggy is physically ahead of the rider; a negative value means it is behind. This is
-// the safety distinction a radial distance cannot make. Cross-track is signed (right positive in
-// this clockwise bearing convention) and off-axis is its absolute angular representation.
+// the distinction a radial distance cannot make. Cross-track and relative angle are signed: right
+// is positive and left negative in this clockwise bearing convention.
 // A rider course is mandatory: while stationary there is no defensible meaning of "in front".
 // ------------------------------------------------------------
-static bool fmFrontGeometry(float* out_along_m, float* out_cross_m, float* out_off_axis_deg)
+static bool fmFrontGeometry(float* out_along_m, float* out_cross_m, float* out_relative_deg)
 {
   *out_along_m      = 0.0f;
   *out_cross_m      = 0.0f;
-  *out_off_axis_deg = 180.0f;
+  *out_relative_deg = 180.0f;
 
   if (fm_rider_course_deg < 0.0f) return false;
 
@@ -2084,7 +2115,7 @@ static bool fmFrontGeometry(float* out_along_m, float* out_cross_m, float* out_o
   float rel_rad = rel * ((float)M_PI / 180.0f);
   *out_along_m      = dist * cosf(rel_rad);
   *out_cross_m      = dist * sinf(rel_rad);
-  *out_off_axis_deg = fabsf(rel);
+  *out_relative_deg = rel;
   return true;
 }
 
@@ -2243,7 +2274,7 @@ static void updateFmRiderTracking()
 // ------------------------------------------------------------
 static void computeFmTarget(double* out_lat, double* out_lng)
 {
-  // Follow gap = hard-stop radius plus the smoothing band (owner default 4 + 2 = 6 m).
+  // Follow radius = hard-stop radius plus smoothing band (factory default 10 + 10 = 20 m).
   float d_follow = usrConf.min_dist_m + usrConf.followme_smoothing_band_m;
   if (d_follow < 0.5f) d_follow = 0.5f;   // guard against a degenerate config
 
@@ -2251,10 +2282,10 @@ static void computeFmTarget(double* out_lat, double* out_lng)
 
   // ---- Degraded mode: no trustworthy rider course ----
   if (fm_rider_course_deg < 0.0f) {
-    // F4 geometry is warning-only, so a missing rider course must not withdraw control. Keep the
+    // F4-F6 geometry is warning-only, so a missing rider course must not withdraw control. Keep the
     // buggy going straight along its own trusted heading until the rider course returns. This does
-    // not pretend to know where "front" is; fm_front_warning stays asserted for that whole interval.
-    if (m == 4) {
+    // not pretend to know where the selected front station is; the warning stays asserted.
+    if (fmIsFrontMode(m)) {
       float buggy_heading = 0.0f;
       uint8_t heading_confidence = 0;
       if (getRtmHeading(&buggy_heading, &heading_confidence)) {
@@ -2288,22 +2319,28 @@ static void computeFmTarget(double* out_lat, double* out_lng)
   double anchor_lat, anchor_lng;
   projectPoint(fm_filt_lat, fm_filt_lng, course, lag_m, &anchor_lat, &anchor_lng);
 
-  // ---- Mode 4 In Front: station point plus a forward steering lookahead ----
+  // ---- Modes 4-6 Front-Left / Front / Front-Right: station plus steering lookahead ----
   // The buggy may reach the station point itself. Steering directly at a coincident GPS point
-  // makes the bearing noise-dominated and can flip it by 180 degrees, so F4 aims farther along the
-  // same course. The station distance still comes entirely from the existing min_dist + band
-  // geometry; the derived lookahead adds no config field and changes no throttle target.
-  if (m == 4) {
+  // makes the bearing noise-dominated and can flip it by 180 degrees, so every front mode aims
+  // farther along the rider course while retaining its station's signed cross-track offset.
+  // Station distance remains the existing min_dist + band radius; F4/F6 rotate that radius by the
+  // existing near_diag_offset_deg while F5 is straight ahead.
+  if (fmIsFrontMode(m)) {
     float lookahead_m = usrConf.followme_smoothing_band_m;
     float half_follow = 0.5f * d_follow;
     if (lookahead_m < half_follow) lookahead_m = half_follow;
     if (lookahead_m < 2.0f)        lookahead_m = 2.0f;
     if (lookahead_m > d_follow)    lookahead_m = d_follow;
 
+    FollowMeFrontStation station = followMeFrontStation(
+        d_follow, m, (float)usrConf.near_diag_offset_deg);
+    float station_along_m = station.along_m;
+    float station_cross_m = station.cross_m;
+
     // Never place the steering point behind a buggy that is already farther ahead than its
     // station. That would command a U-turn back toward the rider. Excess lead is removed only by
-    // the speed cap; steering continues forward along the rider's course.
-    float steer_distance_m = d_follow + lookahead_m;
+    // the speed cap; steering remains at least one lookahead ahead along the rider's course.
+    float steer_along_m = station_along_m + lookahead_m;
 
     // Measure the buggy from the SAME lag-compensated anchor the target is projected from. Using
     // rider-relative along distance here would not be sufficient when the lag cap leaves the anchor
@@ -2320,14 +2357,17 @@ static void computeFmTarget(double* out_lat, double* out_lng)
       float anchor_to_buggy_along_m = anchor_to_buggy_m *
           cosf(rel * ((float)M_PI / 180.0f));
       float ahead_of_buggy_m = anchor_to_buggy_along_m + lookahead_m;
-      if (ahead_of_buggy_m > steer_distance_m) steer_distance_m = ahead_of_buggy_m;
+      if (ahead_of_buggy_m > steer_along_m) steer_along_m = ahead_of_buggy_m;
     } else {
       // Defensive finite-data fallback. Aim from the buggy itself, so even this exceptional tick
       // cannot manufacture a target behind it.
       projectPoint(gps_last_lat, gps_last_lng, course, lookahead_m, out_lat, out_lng);
       return;
     }
-    projectPoint(anchor_lat, anchor_lng, course, steer_distance_m, out_lat, out_lng);
+    float steer_distance_m = hypotf(steer_along_m, station_cross_m);
+    float steer_bearing_deg = course + atan2f(station_cross_m, steer_along_m) *
+        (180.0f / (float)M_PI);
+    projectPoint(anchor_lat, anchor_lng, steer_bearing_deg, steer_distance_m, out_lat, out_lng);
     return;
   }
 
@@ -2437,7 +2477,7 @@ static bool checkFmFaultConditions()
   return true;
 }
 
-// Cold-start the F1-F4 speed governor. Called at every genuine automatic-control edge and while FM
+// Cold-start the F1-F6 speed governor. Called at every genuine automatic-control edge and while FM
 // is idle. Starting the learned cap open at 255 avoids suppressing acceleration below the requested
 // speed; the engage ramp remains the independent, subtract-only activation limiter.
 static void fmResetSpeedGovernor()
@@ -2452,19 +2492,20 @@ static void fmResetSpeedGovernor()
   fm_speed_other_cap_active    = false;
 }
 
-// Compute the requested F1-F4 vehicle speed. F1-F3 may close at rider speed + 10 km/h. F4 varies
-// between rider speed - 10 and rider speed + 10 from signed along-track gap error. In every mode a
-// non-zero boogie_vmax is an absolute ceiling; zero skips only that clamp and never disables the
-// rider-relative governor.
+// Compute the requested F1-F6 vehicle speed. F1-F3 may close at rider speed + 10 km/h. F4-F6 vary
+// between rider speed - 10 and rider speed + 10 from signed along-track gap error. The front-left
+// and front-right along target is the longitudinal component of their diagonal station radius.
+// In every mode a non-zero boogie_vmax is an absolute ceiling; zero skips only that clamp.
 static float fmSpeedTargetKmh(float front_along_m, uint8_t mode)
 {
   float rider_kmh = fm_rider_speed_kmh;
   if (!isfinite(rider_kmh) || rider_kmh < 0.0f) rider_kmh = 0.0f;
 
   float target_kmh;
-  if (mode == 4) {
+  if (fmIsFrontMode(mode)) {
     float d_front = usrConf.min_dist_m + usrConf.followme_smoothing_band_m;
     if (d_front < 0.5f) d_front = 0.5f;
+    d_front = fmFrontTargetAlongM(d_front, mode);
 
     float control_band = usrConf.followme_smoothing_band_m;
     if (control_band < 1.0f) control_band = 1.0f;
@@ -2487,7 +2528,7 @@ static float fmSpeedTargetKmh(float front_along_m, uint8_t mode)
   return target_kmh;
 }
 
-// Stateful PI speed limiter for F1-F4. It updates only when gps_last_ms changes. The integrator
+// Stateful PI speed limiter for F1-F6. It updates only when gps_last_ms changes. The integrator
 // learns the cap required at zero speed error instead of forcing cap 0 at the requested speed.
 // Anti-windup blocks positive integration while approach/align/engage is the tighter cap; negative
 // error may still remove stored cap. A separate 2 km/h overspeed band is the deterministic backstop.
@@ -2585,9 +2626,9 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode)
 //   Cap 1 Hard stop      - dist <= min_dist_m. Handled by the caller as a stop latch: cap 0 remains
 //                          until trigger release, then the separation proof must be rebuilt.
 //   Cap 2 Approach ramp  - F1-3: linear 255 -> 0 across the smoothing band, same shape as RTM's
-//                          approach decel zone. F4 omits it because slowing while the rider catches
+//                          approach decel zone. F4-F6 omit it because slowing while the rider catches
 //                          the buggy would collapse the front gap; the hard stop still applies.
-//   Cap 3 Speed governor - stateful PI limiter. F1-3 target rider speed + closing margin. F4 varies
+//   Cap 3 Speed governor - stateful PI limiter. F1-3 target rider speed + closing margin. F4-F6 vary
 //                          that target around rider speed from signed along-track error. A non-zero
 //                          boogie_vmax clamps the target; zero skips only that absolute clamp. The
 //                          learned holding cap remains non-zero at the requested speed, and a hard
@@ -2597,10 +2638,10 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode)
 //   Cap 5 Engage ramp    - 0 -> full over kFmEngageRampMs on every entry into FM_ACTIVE, so
 //                          engaging and re-engaging is always a smooth build, never a jump.
 //
-// Inputs:  dist_m - radial buggy-to-rider distance; front_along_m - signed F4 forward distance;
+// Inputs:  dist_m - radial buggy-to-rider distance; front_along_m - signed F4-F6 forward distance;
 //          mode - active geometry; now - millis() for this tick
 // Returns: the winning cap, 0-255
-// Side effects: updates the F1-F4 speed PI/filter state.
+// Side effects: updates the F1-F6 speed PI/filter state.
 // ------------------------------------------------------------
 static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
                                      uint8_t mode, unsigned long now)
@@ -2608,13 +2649,13 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
   uint16_t cap   = 255;                                     // start uncapped, take the lowest
   float min_dist = usrConf.min_dist_m;
   float band     = usrConf.followme_smoothing_band_m;
-  bool  in_front = (mode == 4);
+  bool  in_front = fmIsFrontMode(mode);
 
   // ---- Cap 2: approach ramp across the smoothing band ----
-  // Behind modes slow as the buggy approaches the rider. F4 deliberately does not apply this
+  // Behind modes slow as the buggy approaches the rider. F4-F6 deliberately do not apply this
   // radial ramp: when a buggy ahead is being caught, slowing it makes the front gap collapse even
-  // faster. F4 instead controls the along-track gap in the speed governor below; the same radial
-  // min_dist hard stop remains enforced by runFmLoop().
+  // faster. Front modes instead control the along-track gap in the speed governor below; the same
+  // radial min_dist hard stop remains enforced by runFmLoop().
   if (!in_front && band > 0.01f && dist_m < (min_dist + band)) {
     float frac = (dist_m - min_dist) / band;                // 1.0 at the outer edge, 0.0 at the stop radius
     if (frac < 0.0f) frac = 0.0f;
@@ -2690,6 +2731,7 @@ static void fmEnterIdle()
   fm_prev_filt_ms     = 0;
   fm_rider_course_deg = -1.0f;
   fm_rider_speed_kmh  = 0.0f;
+  fm_control_mode     = 0xFF;
   fmResetSpeedGovernor();
 
   // V2.5-Evo - 2026-07-20 - R1/R2: leaving FM entirely drops the separation proof with it.
@@ -2892,7 +2934,7 @@ static void fmReturnFaultStop(unsigned long now, const char *reason, bool thr_he
 }
 
 // Normal RETURN exit. Arrival and moving-rider cancellation share one deterministic destination:
-// FM_ARMED with the live F1-F4 declaration preserved and the separation proof cleared. Motor posture
+// FM_ARMED with the live F1-F6 declaration preserved and the separation proof cleared. Motor posture
 // is published before any diagnostic output. If the trigger is held, cap 0 remains interlocked until
 // one release so exposing ARMED/manual cap 255 cannot produce a surge at the transition edge.
 static void fmExitReturnToArmed()
@@ -2967,7 +3009,7 @@ void runFmLoop()
   fm_diag_diverge_fault    = false;
 
   uint8_t diag_mode = fm_mode_runtime.load(std::memory_order_relaxed);
-  if (usrConf.gps_en && usrConf.rtm_rx_enabled && diag_mode >= 1 && diag_mode <= 4) {
+  if (usrConf.gps_en && usrConf.rtm_rx_enabled && diag_mode >= 1 && diag_mode <= 6) {
     fm_diag_gate_flags |= FM_LOG_GATE_MODE_OK;
   }
   if (thr_received >= 25) fm_diag_gate_flags |= FM_LOG_GATE_TRIGGER_HELD;
@@ -2998,7 +3040,7 @@ void runFmLoop()
   // LATENTLY ARMED — no gesture, no declaration, and nothing on the display to say so. A rider
   // holding the trigger beyond the engage distance would have handed steering to FM without
   // ever asking for it. WHAT THE FIX DOES: 0xFF now means FM_IDLE, always, and 0xFF is greater
-  // than 4 so the mode gate below catches it. usrConf.followme_mode keeps exactly one job —
+  // than 6 so the mode gate below catches it. usrConf.followme_mode keeps exactly one job —
   // it is the value the TX's arm gesture SEEDS from (TX RTMState.ino). It is never again an
   // RX-side auto-arm source. Autonomous steering now always requires a live human declaration.
   uint8_t m = fm_mode_runtime.load(std::memory_order_relaxed);
@@ -3008,7 +3050,7 @@ void runFmLoop()
   // kFmModeAgeMs (95 s, ~3 missed keepalives), the declaration is stale — most likely the
   // TX disarmed and its 0xF2/0 burst was lost in the air, or the TX is gone. Drop to FM_IDLE
   // and reset the runtime mode to 0xFF so re-arming requires a fresh declaration.
-  if (m >= 1 && m <= 4) {
+  if (m >= 1 && m <= 6) {
     unsigned long mode_ms = fm_mode_last_rx_ms.load(std::memory_order_relaxed);
     if (mode_ms == 0 || (now - mode_ms) > kFmModeAgeMs) {
       fm_diag_block_reason = FM_LOG_BLOCK_MODE_EXPIRED;
@@ -3020,7 +3062,7 @@ void runFmLoop()
   }
 
   // ---- FM_IDLE: FM off / never declared (0xFF), or GPS/FM disabled ----
-  if (!usrConf.gps_en || !usrConf.rtm_rx_enabled || m < 1 || m > 4) {
+  if (!usrConf.gps_en || !usrConf.rtm_rx_enabled || m < 1 || m > 6) {
     fm_diag_block_reason = (!usrConf.gps_en || !usrConf.rtm_rx_enabled)
         ? FM_LOG_BLOCK_CONFIG_DISABLED : FM_LOG_BLOCK_NO_DECLARATION;
     fmEnterIdle();
@@ -3096,6 +3138,19 @@ void runFmLoop()
     return;
   }
 
+  // A live mode change does not inherit the previous station's steering derivative or throttle
+  // allowance. Publish the safe values first; the normal !was_controlling path below then resets
+  // P+D history and the speed governor and starts a fresh kFmEngageRampMs ramp toward F1-F6's new
+  // target. The separation proof remains valid because its contract is radial and mode-independent.
+  bool mode_changed_while_active =
+      (fm_state == FM_ACTIVE && fm_control_mode != 0xFF && fm_control_mode != m);
+  fm_control_mode = m;
+  if (mode_changed_while_active) {
+    fm_rx_active       = false;
+    rtm_steer_override = 127;
+    fm_throttle_cap    = 0;
+  }
+
   // ---- Evaluate the conditions ----
   // DEADMAN = trigger. FAULT = sensor/link/heading gates. Geometry is diagnostic only;
   // fm_rx_active records whether automatic control was live last tick.
@@ -3113,11 +3168,12 @@ void runFmLoop()
   float d_engage = fmEffectiveEngageDistance();
   fm_diag_d_engage_m = d_engage;
   float diverge_limit_m = fmEffectiveDivergeDistance(d_engage);
-  bool  front_mode           = (m == 4);
+  bool  front_mode           = fmIsFrontMode(m);
   bool  front_geometry_valid = false;
   float front_along_m        = 0.0f;
   float front_cross_m        = 0.0f;
-  float front_off_axis_deg   = 180.0f;
+  float front_relative_deg   = 180.0f;
+  float front_axis_error_deg = 180.0f;
   // V2.5-Evo - 2026-07-25 - A3: sustained divergence while ACTIVE. Classed as a FAULT (same family
   // as conditions 2-7), so it is routed through the SAME FM_STOPPING path below — never its own.
   bool  diverge_fault = false;
@@ -3284,8 +3340,8 @@ void runFmLoop()
 
   // Geometry is still evaluated with the trigger released so the TX can repeat its 3 s warning.
   // These Schmitt decisions are diagnostics only: they never change cap, steering authority, state
-  // or the separation latch. F1-F3 retain min/min+band as warning thresholds; F4 retains the old
-  // signed-front/cone thresholds as warning thresholds.
+  // or the separation latch. F1-F3 retain min/min+band as warning thresholds; F4-F6 use signed
+  // front position plus angular error from their selected front-left/front/front-right axis.
   bool geometry_eval_ok = fault_ok && latch_position_ok;
   float min_dist = usrConf.min_dist_m;
   float band = usrConf.followme_smoothing_band_m;
@@ -3294,9 +3350,10 @@ void runFmLoop()
 
   if (geometry_eval_ok && front_mode) {
     front_geometry_valid = fmFrontGeometry(
-        &front_along_m, &front_cross_m, &front_off_axis_deg);
-    if (front_geometry_valid && isfinite(front_off_axis_deg)) {
-      fm_diag_front_angle_deg = front_off_axis_deg;
+        &front_along_m, &front_cross_m, &front_relative_deg);
+    if (front_geometry_valid && isfinite(front_relative_deg)) {
+      front_axis_error_deg = fmAngleDiff(front_relative_deg, fmFrontTargetOffsetDeg(m));
+      fm_diag_front_angle_deg = front_axis_error_deg;
     }
   }
 
@@ -3307,12 +3364,12 @@ void runFmLoop()
     if (front_mode) {
       bool front_invalid = !front_geometry_valid ||
                            (dist_m <= min_dist) ||
-                           (front_along_m <= min_dist) ||
-                           (front_off_axis_deg >= usrConf.zone_angle_exit_deg);
+                           (front_along_m <= 0.0f) ||
+                           (front_axis_error_deg >= usrConf.zone_angle_exit_deg);
       bool front_recovered = front_geometry_valid &&
                              (dist_m > d_follow_e) &&
-                             (front_along_m > d_follow_e) &&
-                             (front_off_axis_deg < usrConf.zone_angle_enter_deg);
+                             (front_along_m > 0.0f) &&
+                             (front_axis_error_deg < usrConf.zone_angle_enter_deg);
       if (front_invalid) fm_front_warning = true;
       else if (front_recovered) fm_front_warning = false;
       fm_geometry_warning = !fm_sep_latched;
@@ -3323,9 +3380,9 @@ void runFmLoop()
     }
   }
 
-  // ---- Separation proof: one activation geometry for every F1-F4 mode ----
+  // ---- Separation proof: one activation geometry for every F1-F6 mode ----
   // A held trigger plus trustworthy/fault-free positions must show radial dist > effective D_engage
-  // continuously for kFmSepDwellMs. Side angles and F4's signed front position are intentionally not
+  // continuously for kFmSepDwellMs. Side angles and F4-F6 signed front positions are intentionally not
   // members of this decision. Trigger release interrupts an unfinished dwell but preserves a proof
   // that was already set (except for the min-distance stop release below).
   if (hard_ok && latch_position_ok && !fm_min_dist_stop_latched && dist_m > d_engage) {
@@ -3528,9 +3585,10 @@ void runFmLoop()
       bool first_engagement = !active_session;
       fm_state = FM_ACTIVE;
       if (front_mode) {
-        Serial.printf("FM [RX] %s F4 In Front: dist=%.1f m along=%.1f m cross=%.1f m angle=%.1f deg rider=%.1f km/h course=%.0f\n",
+        Serial.printf("FM [RX] %s mode %u front: dist=%.1f m along=%.1f m cross=%.1f m rel=%.1f deg target=%.1f deg error=%.1f deg rider=%.1f km/h course=%.0f\n",
                       first_engagement ? "ENGAGE" : "RESUME",
-                      dist_m, front_along_m, front_cross_m, front_off_axis_deg,
+                      (unsigned)m, dist_m, front_along_m, front_cross_m, front_relative_deg,
+                      fmFrontTargetOffsetDeg(m), front_axis_error_deg,
                       fm_rider_speed_kmh, fm_rider_course_deg);
       } else {
         Serial.printf("FM [RX] %s mode %u: dist=%.1f m rider=%.1f km/h course=%.0f\n",
@@ -3540,7 +3598,7 @@ void runFmLoop()
     }
 
     fm_rx_active = true;                                   // gate the steering override on
-    computeFmTarget(&fm_target_lat, &fm_target_lng);       // trailing point (F1-3) or front lookahead (F4)
+    computeFmTarget(&fm_target_lat, &fm_target_lng);       // trailing point (F1-3) or front lookahead (F4-6)
     updateFmSteering();                                    // shared P+D controller
     fm_throttle_cap = (uint8_t)fmComputeThrottleCap(dist_m, front_along_m, m, now);
   }

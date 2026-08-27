@@ -69,7 +69,7 @@ Releasing the magnet while `BT_DOT_FAST` → returns to `BT_DOT_OFF`. Short hold
 | LEFT hold 2s | Cycle telemetry display mode | Simple hold, no combo required |
 | RIGHT hold 2s | Reserved — no action | Was: cycle display |
 | RIGHT tap → LEFT hold 5s | Arm RTM (Return-to-Me) | Requires gps_en=1 and rtm_enabled=1 |
-| LEFT tap → RIGHT hold (`fm_hold_duration_s`) | Cycle FM mode (F0→F1→F2→F3→F4) | Requires gps_en=1 and fm_override_enabled=1 |
+| LEFT tap → RIGHT hold (`fm_hold_duration_s`) | Cycle FM mode (F0→F1→F2→F3→F4→F5→F6) | Requires gps_en=1 and fm_override_enabled=1 |
 | Boot: hold RIGHT | Pairing mode | RIGHT toggle held at boot (no throttle) enters pairing; RIGHT + throttle = wipe SPIFFS |
 | Boot: hold LEFT | Calibration mode | LEFT toggle held at boot (no throttle) starts calibration; LEFT + throttle = force BLE session |
 
@@ -161,10 +161,10 @@ Source font: `docs/Dot_Matrix_Display_10x7_Render.html` — canonical pixel layo
 |---|---|---|
 | *(removed)* `A rM` | — | Arm confirm replaced by unlock animation + `rn` 2s blink (removed in P9 Bug4) |
 | `St` | large-font `displayDigits(LET_S, LET_T)` — not compact font | RTM disengages (any exit path) or pre-arm rejected |
-| `FM 0` – `FM 3` | F(3) + M(3) + space(1) + 0-3(3) = 10 | FM mode cycled or FM arm confirmed |
+| `F0` – `F6` | large `LET_F` + mode digit | FM mode cycled or FM arm confirmed |
 | `E 7` | E(3) + space(1) + 7(3) = 7 columns | Water ingress error code E71 (display shows "E 7" — the "1" does not fit; blinks 250ms on/off, non-blocking) |
 
-RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). `showFullScreenMessage()` is still used for `FM 0`–`FM 3` and `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
+RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). FM confirmations similarly use `displayDigits(LET_F, mode)` for F0–F6. `showFullScreenMessage()` remains in use for `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
 
 ## R5 Proximity Bar (P9 New)
 Row R5 (`displayBuffer[6]`) is used as a proximity bar during RTM or FM.
@@ -197,7 +197,7 @@ Blink pattern: 1000 ms on / 500 ms off.
 |---|---|
 | rn | RTM armed — blinks during arm window; static 2s after arm confirmed |
 | St | RTM disengaged or pre-arm rejected — large-font `displayDigits(LET_S, LET_T)`, 2s |
-| FM 0 / FM 1 / FM 2 / FM 3 | FM mode confirmed — full-screen 2s flash (fontCompact3x7) |
+| F0 / F1 / F2 / F3 / F4 / F5 / F6 | FM mode confirmed — large-font 2s flash |
 | -- | ET error or no-data — auto-clears after 3s |
 
 ## Error Codes (TX dot display)

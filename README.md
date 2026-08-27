@@ -407,7 +407,7 @@ Unavailable modes (no VESC lock or no GPS fix) are skipped automatically. `MA` r
 | LEFT hold 2 s | Lock the Remote |
 | RIGHT hold 2 s | Cycle telemetry display mode |
 | RIGHT tap → LEFT hold | No autonomous action (former RTM gesture retired) |
-| LEFT tap → RIGHT hold (default 3 s, tunable 3–10 s) | Cycle **Follow-Me** override mode (F0/F1/F2/F3/F4) |
+| LEFT tap → RIGHT hold (default 3 s, tunable 3–10 s) | Cycle **Follow-Me** override mode (F0–F6) |
 
 > 💡 **Optional — magnet / Hall input for hands-free control.** A DRV5032 Hall sensor on GPIO 9 (P_MAG) lets a magnet gesture activate **BLE** and arm **Follow-Me** without reaching for the toggles (great mid-ride). Wiring + firmware: **[Hall Sensor Expansion guide →](docs/Hall_Sensor_Expansion.md)** · step-by-step fitting (incl. easier-to-solder parts): **[install tutorial →](docs/Hall_Sensor_Install_Tutorial.md)**.
 
@@ -492,7 +492,7 @@ rider. It moves only while the trigger is held; release pauses the return, and d
 steering temporarily takes priority.
 
 On arrival at `distance < effective fm_engage_dist_m`, the RX stops first, clears the separation
-latch and enters `FM_ARMED`. The TX stays armed and keeps the selected F1–F4 declaration alive;
+latch and enters `FM_ARMED`. The TX stays armed and keeps the selected F1–F6 declaration alive;
 automatic Follow-Me cannot resume until a fresh 2-second radial proof above the engagement distance.
 If the trigger is still held, cap 0 remains until it is released once; otherwise manual cap 255 is
 available immediately. Sustained rider motion also cancels return to `FM_ARMED`, never directly to
@@ -508,14 +508,15 @@ controller; their names are retained only for stored-config compatibility.
 
 > FM override is fully implemented in V2.5-Evo. It overrides the RX follow-me positioning mode at runtime without a SPIFFS write.
 
-> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0 / F1 / F2 / F3 / F4) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4 is an experimental forward pacer. Its activation gate is now radial like F1–F3, so it may autonomously travel from behind toward the forward target. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
+> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0–F6) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4–F6 are experimental forward-pacer positions. Their activation gate is radial like F1–F3, so the buggy may autonomously travel from behind toward a forward target. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
 
-The override is RAM-only — RX returns to its web-configured `followme_mode` on reboot.
+The override is RAM-only. After a reboot, the TX seeds the next arm from its configured
+`followme_mode`; the RX never auto-arms from its stored preference.
 
 ### Activation
 
 1. **Combo gesture:** Quick-tap LEFT toggle, then within 3 seconds hold RIGHT toggle for the hold duration (`fm_hold_duration_s`, default 3 s, tunable 3–10 s)
-2. TX display shows `F` + mode number (`F0`–`F4`)
+2. TX display shows `F` + mode number (`F0`–`F6`)
 3. Continue holding RIGHT or re-hold within 2 s to keep cycling modes
 4. Release and wait 2 s — TX sends the selected mode to RX via 0xF2 meta-packet
 
@@ -527,18 +528,20 @@ The override is RAM-only — RX returns to its web-configured `followme_mode` on
 | `F1` | 1 | Near-Right — RX trails behind-right of the rider |
 | `F2` | 2 | Behind (default) — RX trails directly behind the rider |
 | `F3` | 3 | Near-Left — RX trails behind-left of the rider |
-| `F4` | 4 | In Front — RX acts as a forward pacer; radial engagement is identical to F1–F3 |
+| `F4` | 4 | Front-Left — forward-left pacer at `near_diag_offset_deg` |
+| `F5` | 5 | Front — directly ahead as a forward pacer |
+| `F6` | 6 | Front-Right — forward-right pacer at `near_diag_offset_deg` |
 
-For every F1–F4 mode, `fm_engage_dist_m` is a **radial** boundary and must remain exceeded for
-2 seconds. F4's signed lead and `zone_angle_enter_deg`/`zone_angle_exit_deg` cone now drive only the
+For every F1–F6 mode, `fm_engage_dist_m` is a **radial** boundary and must remain exceeded for
+2 seconds. F4–F6 signed lead and selected-axis `zone_angle_enter_deg`/`zone_angle_exit_deg` checks drive only the
 periodic warning: losing the front position does not change steering, cap, state or separation proof.
-This also means F4 no longer has a no-autonomous-overtake guarantee. `boogie_vmax_in_followme_kmh=0`
+This also means the front modes have no no-autonomous-overtake guarantee. `boogie_vmax_in_followme_kmh=0`
 is allowed and removes only the absolute target clamp; the rider-relative PI governor remains active.
-F1–F3 request rider speed +10 km/h. F4 continuously varies its request between rider speed −10 and
-+10 km/h from the signed front-gap error. The PI governor learns the throttle cap needed to hold the
+F1–F3 request rider speed +10 km/h. F4–F6 continuously vary their request between rider speed −10 and
++10 km/h from the signed longitudinal front-gap error. The PI governor learns the throttle cap needed to hold the
 requested speed; a separate overspeed backstop removes the cap between target and target +2 km/h.
 
-A compass-vs-GPS-course disagreement no longer blocks F1–F4 by itself. It latches the compass out
+A compass-vs-GPS-course disagreement no longer blocks F1–F6 by itself. It latches the compass out
 of the heading ladder, while a valid live GPS COG or the short held-COG bridge may still engage and
 steer Follow-Me. If COG is missing, stale or frozen after that hold, FM still has no valid heading
 and remains inactive or ends the active run through its normal heading-fault path.
@@ -582,7 +585,7 @@ If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires 
 
 `fm_engage_dist_m` (RX web UI: **Follow-Me → FM Engage Distance**) is how far you have to get from the buggy before Follow-Me is allowed to engage for the first time. It is the tow-rope interlock: it exists so FM can never take over while you are still on the rope.
 
-The same effective distance is the one radial activation boundary for every F1–F4 mode. An ordinary
+The same effective distance is the one radial activation boundary for every F1–F6 mode. An ordinary
 trigger release preserves a valid proof. If FM stopped at `min_dist_m`, releasing that stop clears the
 proof, and automatic FM must again remain outside this distance for 2 seconds. With
 `fm_engage_dist_m=0`, the automatic value includes the 8 m floor.
@@ -646,7 +649,9 @@ with `?set fm_diverge_dist_m 60`, then `?save`; inspect it with `?get fm_diverge
 | `F1` | Follow-Me override: Near-Right |
 | `F2` | Follow-Me override: Behind (default) |
 | `F3` | Follow-Me override: Near-Left |
-| `F4` | Follow-Me override: In Front (forward pacer) |
+| `F4` | Follow-Me override: Front-Left |
+| `F5` | Follow-Me override: Front |
+| `F6` | Follow-Me override: Front-Right |
 | `rE` | FM_RETURN active; blinking full R5 bar |
 | `Id` | Legacy RX only: old FM_RETURN completion entered idle/disarmed |
 | `St` | Stop — Follow-Me safety gate triggered, or arming blocked |

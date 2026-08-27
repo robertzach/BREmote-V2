@@ -287,7 +287,7 @@ RX side: Receives 0xF2 meta-packet, updates runtime variable, no SPIFFS write
 **Key SPIFFS parameters for FM field testing (mode selection only — autonomous FM not yet implemented):**
 | Param | Board | Default | Notes |
 |---|---|---|---|
-| `fm_override_enabled` | TX | 1 | Must be 1 to allow F0-F3 cycling via gesture |
+| `fm_override_enabled` | TX | 1 | Must be 1 to allow F0-F6 cycling via gesture |
 | `fm_warn_distance_m` | TX | 150m | TX-RX distance triggers proximity vibration warning |
 
 *FM autonomous following (GPS-guided heading + throttle gating) is Priority 9 and not yet implemented. FM gesture cycles the mode selection on RX; no autonomous steering occurs.*

@@ -23,9 +23,12 @@
             <h3>Tracking Controls</h3>
             <label>Follow Mode: 
                 <select id="mode" style="padding:5px; background:#0f172a; color:white; border:1px solid #334155; border-radius:4px;">
-                    <option value="Behind">Mode 1: Behind</option>
-                    <option value="Near Right">Mode 2: Near Right</option>
-                    <option value="Near Left">Mode 3: Near Left</option>
+                    <option value="Near Right">F1: Near Right</option>
+                    <option value="Behind">F2: Behind</option>
+                    <option value="Near Left">F3: Near Left</option>
+                    <option value="Front Left">F4: Front Left</option>
+                    <option value="Front">F5: Front</option>
+                    <option value="Front Right">F6: Front Right</option>
                 </select>
             </label>
             <label>Min Distance (m): <span class="val" id="v_min">10</span>
@@ -71,32 +74,35 @@
             document.getElementById('v_offset').innerText = offset + "°";
 
             const centerX = canvas.width / 2;
-            const centerY = 100; // Foiler is at the Top
+            const centerY = canvas.height / 2;
             
             // AFM: Reduced scale to 4 so max distances easily fit in the canvas
             const scale = 4; 
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Draw Active/Exit Cones (Hysteresis Buffer)
+            // 1. Resolve target and warning axis. Canvas 270° is rider-forward (up).
+            let targetAngle = 90;
+            if (mode === 'Near Right') targetAngle = 90 - offset;
+            if (mode === 'Near Left') targetAngle = 90 + offset;
+            if (mode === 'Front Left') targetAngle = 270 - Math.min(offset, 89);
+            if (mode === 'Front') targetAngle = 270;
+            if (mode === 'Front Right') targetAngle = 270 + Math.min(offset, 89);
+            const warningAxis = mode.startsWith('Front') ? targetAngle : 90;
+
+            // 2. Draw Active/Exit Cones (Hysteresis Buffer)
             ctx.globalAlpha = 0.2;
             ctx.fillStyle = '#ef4444'; // Red Exit Angle (Wide Cone)
-            drawWedge(centerX, centerY, 1000, 90 - exit, 90 + exit); // Radius 1000 to reach edges
+            drawWedge(centerX, centerY, 1000, warningAxis - exit, warningAxis + exit);
             ctx.fillStyle = '#22c55e'; // Green Enter Angle (Narrow Cone)
-            drawWedge(centerX, centerY, 1000, 90 - enter, 90 + enter);
+            drawWedge(centerX, centerY, 1000, warningAxis - enter, warningAxis + enter);
 
-            // 2. Calculate Target Position for the Boogie
-            let targetAngle = 90; // 90 degrees points straight DOWN on a canvas (Behind)
-            
-            // If foiler is moving UP, screen Right is math angle minus offset.
-            if (mode === 'Near Right') targetAngle -= offset; 
-            if (mode === 'Near Left') targetAngle += offset;
-
-            const targetDist = (min_dist + smooth / 2) * scale;
+            // 3. Firmware station radius = min distance + smoothing band.
+            const targetDist = (min_dist + smooth) * scale;
             const tx = centerX + Math.cos(targetAngle * Math.PI / 180) * targetDist;
             const ty = centerY + Math.sin(targetAngle * Math.PI / 180) * targetDist;
 
-            // 3. Draw Safety Zones around the Boogie Target
+            // 4. Draw Safety Zones around the Boogie Target
             ctx.globalAlpha = 0.3;
             ctx.fillStyle = '#f87171'; // Red Dead Zone (Stop)
             ctx.beginPath();
@@ -109,7 +115,7 @@
             ctx.arc(tx, ty, (min_dist + smooth/2) * scale, 0, Math.PI * 2);
             ctx.stroke();
 
-            // 4. Draw Foiler Icon (Top)
+            // 5. Draw Foiler Icon
             ctx.globalAlpha = 1.0;
             ctx.fillStyle = '#38bdf8'; // Blue Surfboard
             ctx.beginPath();

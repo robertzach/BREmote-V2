@@ -116,7 +116,7 @@ const fields=[
 {key:"tog_right",label:"Toggle Right",description:"Raw toggle ADC at right",group:"Calibration",type:"int",def:0,min:0,max:65535},
 {key:"ubat_cal",label:"Battery Cal Factor",description:"ADC-to-voltage calibration",group:"Calibration",type:"float",def:0.000185662,min:0.000001,max:1.0,step:0.000001},
 {key:"gps_en",label:"GPS Enabled",description:"GPS runtime enable flag",group:"GPS & Follow-Me",type:"bool",def:0,min:0,max:1},
-{key:"followme_mode",label:"Follow-Me Mode",description:"Follow-me positioning mode",group:"GPS & Follow-Me",type:"enum",def:0,min:0,max:3,options:[{v:0,l:"Disabled"},{v:1,l:"Behind"},{v:2,l:"Near Right"},{v:3,l:"Near Left"}]},
+{key:"followme_mode",label:"Follow-Me Mode",description:"Follow-me starting position",group:"GPS & Follow-Me",type:"enum",def:2,min:0,max:6,options:[{v:0,l:"Disabled"},{v:1,l:"Near Right"},{v:2,l:"Behind (default)"},{v:3,l:"Near Left"},{v:4,l:"Front Left"},{v:5,l:"Front"},{v:6,l:"Front Right"}]},
 {key:"kalman_en",label:"Kalman Filter",description:"Kalman runtime enable",group:"GPS & Follow-Me",type:"bool",def:0,min:0,max:1},
 {key:"speed_src",label:"Speed Source",description:"Speed data source",group:"GPS & Follow-Me",type:"enum",def:0,min:0,max:5,options:[{v:0,l:"GPS RX km/h"},{v:1,l:"GPS RX knots"},{v:2,l:"GPS TX km/h"},{v:3,l:"GPS TX knots"},{v:4,l:"GPS RX mph"},{v:5,l:"GPS TX mph"}]},
 {key:"tx_gps_stale_timeout_ms",label:"TX GPS Stale Timeout",description:"TX GPS stale timeout",group:"GPS & Follow-Me",type:"int",def:1000,min:0,max:65535,unit:"ms"},

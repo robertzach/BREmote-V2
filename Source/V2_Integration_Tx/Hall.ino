@@ -265,7 +265,7 @@ bool ctminus()
 // Gesture map:
 //   RIGHT hold 2s (simple)             → cycle telemetry display mode
 //   LEFT hold 2s (simple)              → lock remote (unlock: left hold + throttle touch)
-//   LEFT tap → RIGHT hold 5s (combo)   → FM mode cycle (F1/F2/F3/F4/F0)
+//   LEFT tap → RIGHT hold 5s (combo)   → FM mode cycle (F1/F2/F3/F4/F5/F6/F0)
 //   RIGHT tap → LEFT hold              → no autonomous action (standalone RTM retired)
 // ============================================================
 static int           last_tap_dir   = 0;    // last recorded tap direction: +1=right, -1=left, 0=none

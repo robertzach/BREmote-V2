@@ -28,6 +28,9 @@
                     <option value="Behind">Directly Behind</option>
                     <option value="Near Right">Near Right</option>
                     <option value="Near Left">Near Left</option>
+                    <option value="Front Left">Front Left</option>
+                    <option value="Front">Front</option>
+                    <option value="Front Right">Front Right</option>
                 </select>
             </div>
             <div class="ctrl-group">
@@ -80,36 +83,44 @@
             document.getElementById('v_offset').innerText = offset + "°";
 
             const cx = canvas.width / 2;
-            const cy = 100; 
+            const cy = canvas.height / 2;
 
             // ---> UPDATED SCALE MATH <---
             // We find the "total reach" and fit it into the height of the canvas
             const totalMetersVisible = min_dist + smooth + 10; 
-            const scale = (canvas.height - cy - 50) / totalMetersVisible;
+            const scale = Math.min((canvas.height / 2 - 50) / totalMetersVisible,
+                                   (canvas.width / 2 - 50) / totalMetersVisible);
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Draw Tracking Cones with dynamic radius
+            // 1. Resolve target and warning axis. Canvas 270° is rider-forward (up).
+            let angle = 90;
+            if (mode === 'Near Right') angle = 90 - offset;
+            if (mode === 'Near Left') angle = 90 + offset;
+            if (mode === 'Front Left') angle = 270 - Math.min(offset, 89);
+            if (mode === 'Front') angle = 270;
+            if (mode === 'Front Right') angle = 270 + Math.min(offset, 89);
+
+            const frontMode = mode.startsWith('Front');
+            const warningAxis = frontMode ? angle : 90;
+
+            // 2. Draw warning cones with dynamic radius
             const coneRadius = (min_dist + smooth + 5) * scale;
             
             ctx.globalAlpha = 0.08;
             ctx.fillStyle = 'red';
-            drawSector(cx, cy, coneRadius + (20 * scale), 90 - exit, 90 + exit);
+            drawSector(cx, cy, coneRadius + (20 * scale), warningAxis - exit, warningAxis + exit);
             
             ctx.globalAlpha = 0.15;
             ctx.fillStyle = 'lime';
-            drawSector(cx, cy, coneRadius, 90 - enter, 90 + enter);
+            drawSector(cx, cy, coneRadius, warningAxis - enter, warningAxis + enter);
 
-            // 2. Position Logic
-            let angle = 90;
-            if (mode === 'Near Right') angle -= offset;
-            if (mode === 'Near Left') angle += offset;
-
-            const targetDist = (min_dist + (smooth / 2)) * scale;
+            // 3. Firmware station radius = min distance + smoothing band.
+            const targetDist = (min_dist + smooth) * scale;
             const bx = cx + Math.cos(angle * Math.PI / 180) * targetDist;
             const by = cy + Math.sin(angle * Math.PI / 180) * targetDist;
 
-            // 3. Draw Buggy Zones
+            // 4. Draw Buggy Zones
             ctx.globalAlpha = 0.25;
             ctx.fillStyle = '#f87171';
             ctx.beginPath(); ctx.arc(bx, by, min_dist * scale, 0, Math.PI * 2); ctx.fill();
@@ -119,7 +130,7 @@
             ctx.globalAlpha = 0.15;
             ctx.beginPath(); ctx.arc(bx, by, (min_dist + (smooth / 2)) * scale, 0, Math.PI * 2); ctx.stroke();
 
-            // 4. Icons
+            // 5. Icons
             ctx.globalAlpha = 1.0;
             ctx.textAlign = "center";
             

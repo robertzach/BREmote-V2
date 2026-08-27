@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-27 — Follow-Me front family: F4 Front-Left, F5 Front, F6 Front-Right
+
+The former single F4 In-Front mode is now a three-position front family:
+
+- **F4 Front-Left** — the common station radius rotated left by `near_diag_offset_deg`.
+- **F5 Front** — the former straight-ahead forward-pacer geometry.
+- **F6 Front-Right** — the common station radius rotated right by `near_diag_offset_deg`.
+
+All F1–F6 modes retain the same radial two-second `D_engage` proof. F4–F6 retain the forward-mode
+speed governor and warning-only position diagnostics. For diagonal front modes, the governor targets
+the longitudinal cosine component of the station radius, while steering retains the corresponding
+cross-track component and forward lookahead. The 0xF2 packet already carries a full mode byte; only
+the accepted range changes from 0–4 to 0–6. A live station change neutralizes steering/throttle and
+restarts the existing engage ramp before applying the new target. `confStruct`, packet sizes and SW
+versions are unchanged.
+
 ## 2026-08-16 — RX SW35: the compass knows how it is mounted (⚠️ resets your RX settings once)
 
 **Recommended: reflash the RX. Back it up first.**

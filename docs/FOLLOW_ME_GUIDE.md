@@ -53,9 +53,9 @@ Arming is a **declaration of intent.** It does not move anything. There are two 
 While floating, before takeoff:
 
 1. **LEFT tap, then RIGHT hold** (~3 s — set by `fm_hold_duration_s`).
-2. The remote shows **F1 / F2 / F3 / F4** and buzzes **two quick taps** = armed.
+2. The remote shows **F1–F6** and buzzes **two quick taps** = armed.
 3. Cycle the mode by repeating the gesture before you touch the throttle
-   (**F1 → F2 → F3 → F4 → F0-off**).
+   (**F1 → F2 → F3 → F4 → F5 → F6 → F0-off**).
 
 > The toggle **cannot arm once you're on the throttle** — while you hold the trigger, the
 > toggle *is* your steering. That's what the magnet is for.
@@ -77,7 +77,7 @@ don't touch the throttle — so a slow takeoff, a wait, or a short swim won't lo
 
 ## 4. The whip — how Follow-Me engages
 
-Arming is not engaging. Every F1–F4 mode only **engages** when the **radial GPS distance
+Arming is not engaging. Every F1–F6 mode only **engages** when the **radial GPS distance
 confirms you've actually separated** — not from side/front angles and not from a button:
 
 1. You're armed (from §3), throttle held.
@@ -100,7 +100,7 @@ You keep the throttle held the whole time. No release step is needed; the buggy 
 
 ## 5. Where the buggy follows — the offset angle
 
-Four modes set where the buggy stations, **relative to you** (imagine you facing
+Six modes set where the buggy stations, **relative to you** (imagine you facing
 your direction of travel):
 
 | Mode | Name | Buggy sits |
@@ -108,18 +108,21 @@ your direction of travel):
 | **F1** | **Near-Right** | behind and to your right |
 | **F2** | **Behind** (default) | straight behind you |
 | **F3** | **Near-Left** | behind and to your left |
-| **F4** | **In Front** | ahead of you as a forward pacer |
+| **F4** | **Front-Left** | ahead and to your left |
+| **F5** | **Front** | directly ahead as a forward pacer |
+| **F6** | **Front-Right** | ahead and to your right |
 
-F4 uses the same **radial** `>D_engage` 2-second proof as F1–F3. It may therefore drive from behind
-toward its forward target; there is no longer a no-autonomous-overtake guarantee. The signed front
-lead and front-cone angles are warning-only. If the front position is lost, one medium warning repeats
+F4–F6 use the same **radial** `>D_engage` 2-second proof as F1–F3. They may therefore drive from behind
+toward their forward targets; there is no no-autonomous-overtake guarantee. Signed front lead and
+error from the selected front axis are warning-only. If the front position is lost, one medium warning repeats
 every 3 seconds—even with the trigger released—but steering, throttle cap, state and separation proof
 continue unchanged.
 
-For F1/F3, the exact angle is set by **`near_diag_offset_deg`** — the number of degrees **off
-straight-behind**. Near-Right and Near-Left are mirror images of it; F4 does not use this offset:
+The exact diagonal angle is set by **`near_diag_offset_deg`**. F1/F3 apply it from straight behind;
+F4/F6 apply it from straight ahead. F5 stays at zero offset:
 
 - **Near-Right = 180° − offset** · **Near-Left = 180° + offset**
+- **Front-Left = −offset** · **Front = 0°** · **Front-Right = +offset**
 - **Bigger offset → more beside you. Smaller offset → more behind you.**
 
 | Offset | Near-Right | Near-Left | Feel |
@@ -128,6 +131,10 @@ straight-behind**. Near-Right and Near-Left are mirror images of it; F4 does not
 | **45° (current)** | **135°** | **225°** | behind-diagonal |
 | 60° | 120° | 240° | tucked behind, slightly out |
 | 90° | 90° | 270° | directly beside you |
+
+With the current 20 m station radius and 45° offset, F4/F6 sit approximately **14.1 m ahead**
+and **14.1 m left/right**. F5 sits 20 m directly ahead. Front-mode use is capped below 90° so a
+front station cannot be placed behind the rider.
 
 *(0° = ahead of you, 90° = your right, 180° = straight behind, 270° = your left.)*
 
@@ -147,7 +154,7 @@ Not every interruption is the same. Follow-Me tells them apart:
 | **You steer manually while following** | temporary takeover | your steering wins; FM state and throttle cap stay active; centre the input to return steering to FM | no |
 | **`min_dist_m` is reached** | stop latch | cap 0 until trigger release; distance recovery alone does nothing; release restores manual cap 255 and clears separation proof | no re-arm, but new `>D_engage` proof |
 | **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
-| **F4 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
+| **F4–F6 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
 | **GPS heading/position or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
 | **Compass disagrees with valid GPS COG** | GPS-only degradation | compass is excluded; FM may engage/continue on live or briefly held COG | **no** |
 
@@ -168,7 +175,7 @@ than the effective `fm_engage_dist_m`, the state changes from `FM_ARMED` or `FM_
 - Entry clears the old separation latch.
 - If you move faster than 3 km/h for 1 second, return is cancelled to `FM_ARMED`.
 - Arrival at `distance < effective fm_engage_dist_m` stops first, clears the separation latch and
-  enters `FM_ARMED`. The selected F1–F4 declaration remains armed, but automatic control needs a
+  enters `FM_ARMED`. The selected F1–F6 declaration remains armed, but automatic control needs a
   fresh 2-second radial proof above the engagement distance. Neither normal exit jumps directly to
   `FM_ACTIVE` or disarms to `FM_IDLE`.
 - If the trigger is held when either normal exit occurs, cap 0 remains until you release it once;
@@ -208,15 +215,15 @@ fault while you're holding the trigger. A stop after you've already let go just 
 
 | Setting | What it does | Note |
 |---|---|---|
-| `followme_mode` | geometry: 1 = Near-Right, **2 = Behind (default)**, 3 = Near-Left, 4 = In Front | TX seed for the arm gesture |
-| `near_diag_offset_deg` | angle off straight-behind (see §5) | **45** = Right 135° / Left 225° |
+| `followme_mode` | geometry: 1 = Near-Right, **2 = Behind**, 3 = Near-Left, 4 = Front-Left, 5 = Front, 6 = Front-Right | TX seed for the arm gesture |
+| `near_diag_offset_deg` | diagonal angle for F1/F3 and F4/F6 (see §5) | **45°**; F5 ignores it |
 | `min_dist_m` | ACTIVE hard-stop distance | cap 0 latches until trigger release; release clears separation proof |
 | `followme_smoothing_band_m` | decel band above the hard stop | follow distance = `min_dist_m` + this |
-| `boogie_vmax_in_followme_kmh` | absolute speed ceiling while following | 0 = no absolute ceiling, also for F4; F4 still regulates its front gap relative to rider speed |
+| `boogie_vmax_in_followme_kmh` | absolute speed ceiling while following | 0 = no absolute ceiling; F4–F6 still regulate longitudinal front gap relative to rider speed |
 | `fm_arm_window_s` *(TX)* | how long an arm survives with no throttle | **180 s** |
 | `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
-| `fm_engage_dist_m` | radial F1–F4 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
+| `fm_engage_dist_m` | radial F1–F6 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
 | `fm_diverge_dist_m` | absolute upper FM_ACTIVE divergence-test distance | default/max 100 m; values below `2 × D_engage` are raised to that minimum; legacy 0 derives the old `6 × D_engage` value under the 100 m cap; fault still needs 3 s without more than 2 m closure |
 | `rtm_target_speed_kmh` | FM_RETURN speed target (historical key) | 0 = 5 km/h; hard maximum 8 km/h |
 | `rtm_approach_zone_m` | FM_RETURN slowdown-band width outside the arrival radius (historical key) | minimum effective width 2 m |

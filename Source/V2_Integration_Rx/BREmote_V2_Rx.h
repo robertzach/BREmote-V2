@@ -61,6 +61,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/FollowMeGeometry.h"
 #include "../Common/SteeringCurve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -143,7 +144,7 @@ struct confStruct {
 
     // GPS features related flags
     uint16_t gps_en;         // GPS runtime enable flag (0=disabled, 1=enabled)
-    uint16_t followme_mode;  // Follow-me mode (0=off, 1=near_right, 2=behind, 3=near_left, 4=in_front)
+    uint16_t followme_mode;  // 0=off, 1=rear-right, 2=behind, 3=rear-left, 4=front-left, 5=front, 6=front-right
     uint16_t kalman_en;      // Kalman filter runtime enable flag (0=disabled, 1=enabled)
 
     //Follow-me
@@ -164,12 +165,12 @@ struct confStruct {
     // F1/F3: decides whether the buggy is lined up closely enough BEHIND the rider to apply the
     // diagonal side offset, or whether it should just sit directly behind. Measured from the
     // directly-behind axis; it is not an F1/F3 engagement gate.
-    // F4: reused as the inner front-warning threshold. It does not gate engagement or control.
+    // F4-F6: reused as the inner target-axis warning threshold. It does not gate control.
     // Range: 0-180°. Default 35°.
     float zone_angle_enter_deg;
 
     // FOLLOW-GEOMETRY SCHMITT — EXIT half-angle (degrees). F1/F3 drop the diagonal beyond it;
-    // F4 raises its front-position warning beyond it but keeps the same steering/cap/state/latch.
+    // F4-F6 raise their front-position warning beyond it but keep steering/cap/state/latch.
     // MUST be > zone_angle_enter_deg by 5-15° so noise cannot flap either decision.
     // Range: 0-180°. Default 45°.
     float zone_angle_exit_deg;
@@ -735,7 +736,7 @@ unsigned long rx_tx_gps_timestamp = 0;    // millis() when last meta-packet rece
 // FM runtime state. Historical rtm_* names remain on shared controller/diagnostic storage so the
 // packet/log/config ABI does not change; standalone RTM has no activation or PWM path.
 // rtm_steer_override: shared FM bearing-derived steering value (0-255, 127=straight ahead).
-// fm_mode_runtime: TX-side FM mode declaration (0-4); 0xFF = no declaration this session.
+// fm_mode_runtime: TX-side FM mode declaration (0-6); 0xFF = no declaration this session.
 // V2.5-Evo - 2026-04-25 - P7 fix: use std::atomic for safe access across FreeRTOS task
 // preemption. generatePWM (task) and RTMState.ino loop() both run on the single-core
 // ESP32-C3; std::atomic gives an indivisible read/write + compiler barrier so a higher-
@@ -977,7 +978,7 @@ struct __attribute__((packed)) VescLogDataL4 {
     uint16_t fm_d_engage_dx10;     // effective D_engage x10 m (configured/auto value after 8 m floor)
     uint16_t fm_rider_speed_dx10;  // filtered rider speed x10 km/h; 0xFFFF = unavailable
     uint16_t fm_sep_dwell_ms;      // current radial separation proof progress; 0..2000 ms
-    int16_t  fm_front_angle_dx10;  // F4 off-axis angle x10 deg; 0x7FFF = not F4/not measurable
+    int16_t  fm_front_angle_dx10;  // F4-F6 selected-axis error x10 deg; 0x7FFF = not front/not measurable
     uint8_t  fm_mode;              // live RX declaration: 1..4; 0/0xFF = disabled/not declared
     uint8_t  fm_state;             // 0=IDLE, 1=ARMED, 2=ACTIVE, 4=STOPPING, 5=RETURN
     uint8_t  fm_block_reason;      // FM_LOG_BLOCK_* below; formatter emits a stable text label
@@ -1414,7 +1415,7 @@ inline void webCfgNotifyRxConnected() {}  // No-op stub when WiFi disabled
 #define FM_FLAG_RETURN       0x10
 #define FM_FLAG_DONE         0x20  // reserved: legacy RETURN->IDLE completion bit; current RX does not emit
 #define FM_FLAG_GEOMETRY     0x40  // radial/separation geometry warning only; no control effect
-#define FM_FLAG_FRONT_LOST   0x80  // F4 front-position warning only; no control effect
+#define FM_FLAG_FRONT_LOST   0x80  // F4-F6 front-position warning only; no control effect
 struct __attribute__((packed)) TelemetryPacket {
     uint8_t foil_bat = 0xFF;          // index 0 — battery % 0-100
     uint8_t foil_temp = 0xFF;         // index 1 — FET temp degC
@@ -1432,7 +1433,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t rx_heading = 0xFF;        // index 13 — GPS COG÷2 (0-179→0-358°); 0xFF = N/A
     uint8_t fm_heading_err = 127;     // index 14 — bearing error+127; 127 = no data
     uint8_t fm_status = 0;            // index 15 — [7]=aux2_on [6]=aux1_on [5]=vesc_online [4]=rx_wetness [3:2]=heading_conf [1]=rtm_active [0]=fm_active
-    uint8_t fm_flags = 0;             // index 16 — FM state: [7]=F4-front warning [6]=geometry warning
+    uint8_t fm_flags = 0;             // index 16 — FM state: [7]=F4-F6 front warning [6]=geometry warning
                                       // [5]=legacy done/reserved [4]=return [3]=fault [2]=not-ready [1]=driving [0]=armed
     uint8_t rx_bearing_to_tx = 0xFF;  // index 17 — bearing from buggy toward rider÷2; 0xFF = N/A
     uint8_t link_quality = 0;         // index 18 (must be last)

@@ -2,7 +2,7 @@
 
 **Project:** BREmote V2.5-Evo
 **Date:** July 18, 2026
-**Status:** Implemented, including `FM_RETURN`; F4 In Front remains experimental and requires controlled validation.
+**Status:** Implemented, including `FM_RETURN`; F4–F6 front modes remain experimental and require controlled validation.
 The former standalone Return-to-Me mode is retired. Direct return is now an FM state.
 
 ## 1. Purpose and Safety Philosophy
@@ -26,9 +26,11 @@ FM = autonomous steering + distance-based throttle limiting, under a human throt
 | 1 | **Near-Right** | behind-right diagonal at `near_diag_offset_deg` |
 | 2 | **Behind** (default) | directly behind rider's course |
 | 3 | **Near-Left** | behind-left diagonal |
-| 4 | **In Front** | forward pacer; radial engagement is identical to F1–F3 |
+| 4 | **Front-Left** | forward-left pacer using `near_diag_offset_deg` |
+| 5 | **Front** | forward pacer directly on rider course |
+| 6 | **Front-Right** | forward-right pacer using `near_diag_offset_deg` |
 
-This TX-side convention is canonical for ALL surfaces (TX display F0–F4, RX struct, both web UIs, README). Default = 2 (Behind).
+This TX-side convention is canonical for ALL surfaces (TX display F0–F6, RX struct, both web UIs, README). Default = 2 (Behind).
 
 ## 3. What already exists (reuse verbatim — do not reimplement)
 
@@ -54,7 +56,7 @@ Any live state ──disarm / declaration expiry / config disable──→ FM_ID
 ```
 
 - **FM_IDLE:** `fm_mode_runtime` = 0 or unset. `0xFF` means no live TX declaration and never falls back to stored RX config.
-- **FM_ARMED:** mode 1–4 selected; all monitoring runs; throttle chain inactive until activation conditions met. Display/telemetry reflect armed state (`fm_status`).
+- **FM_ARMED:** mode 1–6 selected; all monitoring runs; throttle chain inactive until activation conditions met. Display/telemetry reflect armed state (`fm_status`).
 - **FM_ACTIVE:** once engaged, this remains the lifecycle state through ordinary trigger release and
   geometry/front-position warnings. `fm_rx_active` says whether automatic steering is live on this
   tick. An ordinary release leaves the cap unchanged because the physical trigger already commands
@@ -62,14 +64,14 @@ Any live state ──disarm / declaration expiry / config disable──→ FM_ID
   `min_dist_m` while the trigger is held is different: it latches cap 0 until release. That release
   restores manual cap 255 and clears the separation proof, so automatic control must again prove
   radial distance above `D_engage` for 2 seconds. Warnings repeat every 3 seconds even with no trigger.
-- **FM_RETURN:** entered after the filtered rider speed stays below 2 km/h and radial distance stays beyond effective `D_engage` for 2 s. It is valid after normal following and directly from a stationary `FM_ARMED` declaration. Entry clears the separation latch. While the trigger is held, cap 0 keeps the buggy still during the proof; with the trigger released, zero input already does that. It then aims directly at the rider using the FM heading controller, align cap, return speed governor, approach band and convergence check. Trigger release pauses without leaving `FM_RETURN`. Arrival at `dist < D_engage`, or rider speed above 3 km/h for 1 s, exits only to `FM_ARMED`: the F1–F4 declaration remains live, but automatic Follow-Me needs a fresh 2-second radial proof above `D_engage`. There is no normal shortcut to `FM_ACTIVE` and no arrival-driven transition to `FM_IDLE`. If the trigger is held at the exit edge, cap 0 remains until one release; otherwise manual cap 255 is restored immediately.
+- **FM_RETURN:** entered after the filtered rider speed stays below 2 km/h and radial distance stays beyond effective `D_engage` for 2 s. It is valid after normal following and directly from a stationary `FM_ARMED` declaration. Entry clears the separation latch. While the trigger is held, cap 0 keeps the buggy still during the proof; with the trigger released, zero input already does that. It then aims directly at the rider using the FM heading controller, align cap, return speed governor, approach band and convergence check. Trigger release pauses without leaving `FM_RETURN`. Arrival at `dist < D_engage`, or rider speed above 3 km/h for 1 s, exits only to `FM_ARMED`: the F1–F6 declaration remains live, but automatic Follow-Me needs a fresh 2-second radial proof above `D_engage`. There is no normal shortcut to `FM_ACTIVE` and no arrival-driven transition to `FM_IDLE`. If the trigger is held at the exit edge, cap 0 remains until one release; otherwise manual cap 255 is restored immediately.
 - **FM_STOPPING:** a sensor/link/heading or divergence fault ends the run, ramps the cap back to manual and requires a fresh TX declaration.
 
 While FM is ACTIVE, a manual steering deflection of at least 40 raw counts from centre takes steering
 priority immediately at the 100 Hz PWM layer. FM remains ACTIVE, its separation proof and throttle
 cap remain in force, and centring the input returns steering to FM. Divergence timing is parked while
 manual steering has priority because the resulting path is rider-commanded, not FM convergence.
-F4's physical front-corridor calculation remains as diagnostic feedback only. Losing it raises the
+The F4–F6 selected front-corridor calculation remains diagnostic feedback only. Losing it raises the
 periodic warning but does not alter steering, throttle cap, lifecycle state or separation proof.
 
 ## 5. Automatic-control conditions (checked every loop)
@@ -83,7 +85,7 @@ periodic warning but does not alter steering, throttle cap, lifecycle state or s
    the compass but is not itself an engagement gate: live GPS COG or the short held-COG bridge is
    sufficient. If that GPS heading is absent, stale or frozen, the condition still fails.
 7. LoRa healthy: `millis() − last_packet < failsafe_time`.
-8. Radial separation proven: `dist > effective D_engage` continuously for 2 s. This is identical for F1–F4; angles and signed front lead are not activation gates.
+8. Radial separation proven: `dist > effective D_engage` continuously for 2 s. This is identical for F1–F6; angles and signed front lead are not activation gates.
 9. `dist > min_dist_m`, unless the min-distance stop has already latched. Crossing `min_dist_m` latches cap 0 until trigger release.
 
 There is no configurable rider-low-speed gate. Below 2 km/h, the fixed 2-second stationary proof
@@ -106,21 +108,22 @@ Per control tick (10 Hz), all on RX:
 5. **Steer:** feed `target` to the existing steering pipeline unchanged. Publish `fm_heading_err` and `fm_status` each rotation.
 6. **Side-zone hysteresis:** when the angle between rider course and rider→buggy bearing crosses `zone_angle_enter_deg`/`zone_angle_exit_deg`, blend diagonal ↔ pure-behind (Schmitt pair) so an unstable rider course cannot whip the target point across the wake.
 
-Mode 4 replaces the trailing point with a forward station at `d_follow`. Its steering point is a
-derived lookahead that is kept ahead of the buggy, so excess lead is corrected by slowing down rather
-than by a U-turn toward the rider. Engagement uses the same **radial** `dist > D_engage` 2-second proof
-as F1–F3. Consequently F4 may drive from behind toward its forward target; there is no longer a
-no-autonomous-overtake gate. Loss of rider course, signed lead or front cone raises a warning only.
-With no valid rider course, F4 temporarily aims straight ahead on the buggy's trusted heading while
-the warning remains asserted.
+Modes 4–6 replace the trailing point with a front station on the same `d_follow` radius. F5 lies on
+the rider course; F4 rotates the radius by `-near_diag_offset_deg` toward rider-left and F6 by the
+positive angle toward rider-right. Their steering points add a rider-course lookahead while retaining
+the station's cross-track component. The point is kept ahead of the buggy, so excess lead is corrected
+by slowing down rather than by a U-turn. Engagement uses the same **radial** `dist > D_engage`
+2-second proof as F1–F3. Consequently F4–F6 may drive from behind toward their forward targets; there
+is no no-autonomous-overtake gate. Loss of rider course, signed lead or selected axis raises a warning
+only. With no valid rider course, F4–F6 temporarily aim straight ahead on the buggy's trusted heading.
 
 ## 7. Throttle cap chain (subtract-only; lowest cap wins)
 
 | # | Cap | Source pattern |
 |---|---|---|
 | 1 | Hard stop: `dist <= min_dist_m` → latch cap 0 until trigger release; release restores manual cap 255 and clears the separation proof | FM stop latch |
-| 2 | Approach ramp: F1–F3 linear 255→0 across the smoothing band; F4 omits it because slowing when caught collapses the front gap | FM approach ramp |
-| 3 | Stateful PI speed governor: F1–F3 target rider speed + 10 km/h; F4 varies from rider speed −10 to +10 km/h using along-track error. GPS speed and target are filtered, a 0.5 km/h deadband suppresses jitter, and cap removal is faster than restoration. A non-zero `boogie_vmax_in_followme_kmh` clamps the requested target; 0 removes only this absolute clamp. The learned cap can hold the target instead of becoming zero there; a separate overspeed backstop reduces cap to zero from target to target +2 km/h. | Run-phase governor |
+| 2 | Approach ramp: F1–F3 linear 255→0 across the smoothing band; F4–F6 omit it because slowing when caught collapses the front gap | FM approach ramp |
+| 3 | Stateful PI speed governor: F1–F3 target rider speed + 10 km/h; F4–F6 vary from rider speed −10 to +10 km/h using along-track error. F4/F6 target the longitudinal cosine component of their diagonal station radius. GPS speed and target are filtered, a 0.5 km/h deadband suppresses jitter, and cap removal is faster than restoration. A non-zero `boogie_vmax_in_followme_kmh` clamps the requested target; 0 removes only this absolute clamp. | Run-phase governor |
 | 4 | Align phase: heading error > threshold → ~5 % cap | Align-phase pattern |
 | 5 | Engage ramp: 0→cap over 3–4 s on every FM_ACTIVE entry | FM engage ramp |
 
@@ -133,7 +136,7 @@ run must again prove `dist > D_engage`. Explicit disarm remains the deterministi
 
 ## 8. Parameters
 
-F4 reuses the existing FM parameters (no SW_VERSION bump):
+F4–F6 reuse the existing FM parameters (no SW_VERSION bump):
 
 `fm_diverge_dist_m` also requires no version bump: it renames the banked final float slot in place,
 so `confStruct` remains 192 bytes. Explicit values are absolute metres. The effective value is raised
@@ -145,10 +148,10 @@ compatibility value reconstructs the old `6 × D_engage` limit and then applies 
 | `followme_mode` | TX starting mode / RX stored preference; live arming still requires 0xF2 | 2 (Behind) |
 | `min_dist_m` | hard-stop distance | 10 m |
 | `followme_smoothing_band_m` | hysteresis + ramp band (station = sum) | 10 m |
-| `near_diag_offset_deg` | diagonal offset (modes 1/3) | 45° |
-| `boogie_vmax_in_followme_kmh` | F1–F4 PI target clamp; 0 = no absolute clamp (the rider-relative governor remains active) | 25 km/h (~15.5 mph) |
-| `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4 warning Schmitt only | 35° / 45° |
-| `fm_engage_dist_m` | one radial F1–F4 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
+| `near_diag_offset_deg` | diagonal offset for modes 1/3 and front modes 4/6; F5 uses 0° | 45° |
+| `boogie_vmax_in_followme_kmh` | F1–F6 PI target clamp; 0 = no absolute clamp (the rider-relative governor remains active) | 25 km/h (~15.5 mph) |
+| `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4–F6 selected-axis warning Schmitt only | 35° / 45° |
+| `fm_engage_dist_m` | one radial F1–F6 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
 | `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |
 | `rtm_target_speed_kmh` | historical key: FM Return GPS speed target; 0 uses 5 km/h, hard-limited to 8 km/h | 4 km/h |
 | `rtm_align_threshold_deg` | historical key: FM Return align threshold | 45° |
@@ -171,9 +174,9 @@ not used at runtime.
 | Sustained divergence | distance > effective `fm_diverge_dist_m` for 3 s without closing by more than 2 m (after engage grace) | cap 0, STOPPING → IDLE, re-arm required |
 | Rider reaches stop radius | dist ≤ `min_dist_m` while ACTIVE and trigger held | latch cap 0; distance recovery alone does nothing; trigger release clears stop + separation proof and exposes manual cap 255 |
 | Rider stationary | filtered speed < 2 km/h for 2 s | outside `D_engage`: `FM_RETURN`; inside it: no special transition |
-| Rider course invalid | speed < ~5 km/h | F1–F3 use radial hold-station target; F4 goes straight on buggy heading and raises warning |
+| Rider course invalid | speed < ~5 km/h | F1–F3 use radial hold-station target; F4–F6 go straight on buggy heading and raise warning |
 | F1–F3 warning geometry invalid | radial warning Schmitt | stay/control normally; 300 ms warning every 3 s; no cap/state/steering/latch change |
-| F4 no longer ahead/in front cone | signed lead / angle warning Schmitt | stay/control normally; 300 ms warning every 3 s; no cap/state/steering/latch change |
+| F4–F6 lose their selected front axis | signed lead / angle warning Schmitt | stay/control normally; 300 ms warning every 3 s; no cap/state/steering/latch change |
 | Trigger released | physical | motor stops; ordinary release leaves current cap/state/proof untouched; warning continues; a latched min-distance stop is released and its separation proof cleared |
 | Rider stationary beyond effective `D_engage` | radial distance > `D_engage` and filtered speed < 2 km/h for 2 s | enter `FM_RETURN`; drive remains trigger-gated |
 | FM Return arrival | radial distance < `D_engage` | stop first, clear latch, preserve declaration and enter `FM_ARMED`; held trigger stays cap 0 until release, then manual cap 255; fresh `>D_engage` proof required |
@@ -184,7 +187,7 @@ not used at runtime.
 
 ## 10. Test plan
 
-1. **Bench, motor off:** mode plumbing end-to-end; simulated coordinates through target-point math; sign/offset verification; all F1–F4 modes engage only after radial `>D_engage` for 2 s; geometry/front warning edges have no control effect; min-distance cap 0 persists across distance recovery and clears only on trigger release; every fault gate force-failed → cap 0.
+1. **Bench, motor off:** mode plumbing end-to-end; simulated coordinates through target-point math; sign/offset verification; all F1–F6 modes engage only after radial `>D_engage` for 2 s; geometry/front warning edges have no control effect; min-distance cap 0 persists across distance recovery and clears only on trigger release; every fault gate force-failed → cap 0.
 2. **Bench, wheels up:** cap chain order; engage ramp; align-phase cap; compass-under-load table (from Phase 0.5).
 3. **Controlled water, tethered:** mode 2 (Behind) only, walking-pace rider, hard-stop verification, GPS-denial stop.
 4. **Field, incremental:** mode 2 first at 6 m; then mode 1 (Near-Right); throttle hand ready to cut throughout; logging enabled (aux button) every run.
@@ -199,4 +202,4 @@ not used at runtime.
 6. Telemetry: populate idx 14/15; TX display FM-active state.
 7. Safety audit (motor-safety verdict first), then §10 gates in order.
 
-F4 only extends TX mode selection and the existing 0xF2 value range. No new packet, config field or rate change (2 Hz 0xF3 remains unchanged).
+F4–F6 only extend TX mode selection and the existing 0xF2 value range. No new packet, config field or rate change (2 Hz 0xF3 remains unchanged).
