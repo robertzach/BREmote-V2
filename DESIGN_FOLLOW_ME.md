@@ -118,7 +118,7 @@ the warning remains asserted.
 |---|---|---|
 | 1 | Hard stop: `dist <= min_dist_m` → latch cap 0 until trigger release; release restores manual cap 255 and clears the separation proof | FM stop latch |
 | 2 | Approach ramp: F1–F3 linear 255→0 across the smoothing band; F4 omits it because slowing when caught collapses the front gap | FM approach ramp |
-| 3 | Speed governor: F1–F3 target rider speed + margin; F4 varies around rider speed from along-track error; non-zero `boogie_vmax_in_followme_kmh` is the final absolute ceiling, while 0 means no absolute ceiling | Run-phase governor |
+| 3 | Stateful PI speed governor: F1–F3 target rider speed + 10 km/h; F4 varies from rider speed −10 to +10 km/h using along-track error. GPS speed and target are filtered, a 0.5 km/h deadband suppresses jitter, and cap removal is faster than restoration. A non-zero `boogie_vmax_in_followme_kmh` clamps the requested target; 0 removes only this absolute clamp. The learned cap can hold the target instead of becoming zero there; a separate overspeed backstop reduces cap to zero from target to target +2 km/h. | Run-phase governor |
 | 4 | Align phase: heading error > threshold → ~5 % cap | Align-phase pattern |
 | 5 | Engage ramp: 0→cap over 3–4 s on every FM_ACTIVE entry | FM engage ramp |
 
@@ -144,7 +144,7 @@ compatibility value reconstructs the old `6 × D_engage` limit and then applies 
 | `min_dist_m` | hard-stop distance | 10 m |
 | `followme_smoothing_band_m` | hysteresis + ramp band (station = sum) | 10 m |
 | `near_diag_offset_deg` | diagonal offset (modes 1/3) | 45° |
-| `boogie_vmax_in_followme_kmh` | FM absolute speed ceiling; 0 = no absolute ceiling (F4 gap governor remains active) | 25 km/h (~15.5 mph) |
+| `boogie_vmax_in_followme_kmh` | F1–F4 PI target clamp; 0 = no absolute clamp (the rider-relative governor remains active) | 25 km/h (~15.5 mph) |
 | `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4 warning Schmitt only | 35° / 45° |
 | `fm_engage_dist_m` | one radial F1–F4 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
 | `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |

@@ -533,7 +533,10 @@ For every F1–F4 mode, `fm_engage_dist_m` is a **radial** boundary and must rem
 2 seconds. F4's signed lead and `zone_angle_enter_deg`/`zone_angle_exit_deg` cone now drive only the
 periodic warning: losing the front position does not change steering, cap, state or separation proof.
 This also means F4 no longer has a no-autonomous-overtake guarantee. `boogie_vmax_in_followme_kmh=0`
-is allowed and removes the absolute vehicle-speed ceiling; its rider-relative gap governor remains.
+is allowed and removes only the absolute target clamp; the rider-relative PI governor remains active.
+F1–F3 request rider speed +10 km/h. F4 continuously varies its request between rider speed −10 and
++10 km/h from the signed front-gap error. The PI governor learns the throttle cap needed to hold the
+requested speed; a separate overspeed backstop removes the cap between target and target +2 km/h.
 
 While FM is following, a deliberate manual steering input temporarily takes steering priority
 without cancelling FM; the FM throttle cap and separation proof remain active, and centring the

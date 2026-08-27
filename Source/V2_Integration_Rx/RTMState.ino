@@ -1303,7 +1303,21 @@ static const float    kFmCourseValidSpeedKmh = 5.0f;   // km/h
 
 // How much faster than the rider the buggy is allowed to run while closing the gap.
 // Feeds throttle cap 3 (speed governor): target = min(boogie_vmax, rider_speed + this).
-static const float    kFmClosingMarginKmh    = 5.0f;   // km/h
+static const float    kFmClosingMarginKmh    = 10.0f;  // km/h
+
+// Stateful F1-F4 speed governor. The old stateless law multiplied the available throttle by
+// (1 - speed/target), which made the cap zero AT the requested speed and therefore guaranteed a
+// steady-state speed below the target. This PI controller instead learns the cap needed to hold the
+// target. GPS speed and the F4 gap-derived target are filtered independently; the small deadband
+// rejects speed quantisation. Cap removal is deliberately faster than cap restoration.
+static const float    kFmSpeedFilterTauS          = 0.75f;
+static const float    kFmSpeedTargetFilterTauS    = 1.00f;
+static const float    kFmSpeedDeadbandKmh         = 0.50f;
+static const float    kFmSpeedKp                  = 18.0f;  // cap counts per km/h
+static const float    kFmSpeedKi                  = 4.0f;   // cap counts per km/h/second
+static const float    kFmSpeedCapRisePerS         = 35.0f;
+static const float    kFmSpeedCapFallPerS         = 100.0f;
+static const float    kFmSpeedOverspeedBandKmh    = 2.0f;   // target+2 km/h -> hard speed cap 0
 
 // Align-phase throttle cap (~5% of 255). While the heading error is large the buggy
 // should pivot toward the target, not drive away from it. Same value RTM's align phase uses.
@@ -1427,8 +1441,8 @@ static const uint32_t kFmDivergeMs           = 3000;   // ms
 // does ("dist_m >= rtm_prev_dist_m" -> not closing -> fail). We snapshot the distance when the dwell
 // starts and, at dwell expiry, only fault if the buggy has NOT closed by more than this epsilon.
 // WHY 2.0 m. The buggy's closing speed is capped by cap 3, the speed governor, at rider speed +
-// kFmClosingMarginKmh = 5 km/h = 1.39 m/s, so over the 3 s dwell a genuinely closing buggy recovers
-// up to ~4.2 m — comfortably more than 2 m. 2 m is meanwhile larger than ordinary GPS scatter at these
+// kFmClosingMarginKmh = 10 km/h = 2.78 m/s, so over the 3 s dwell a genuinely closing buggy recovers
+// up to ~8.3 m — comfortably more than 2 m. 2 m is meanwhile larger than ordinary GPS scatter at these
 // distances, so noise alone cannot fake "closing" and cancel a real divergence.
 static const float    kFmDivergeCloseEpsM    = 2.0f;   // metres of closure over the dwell
 
@@ -1492,6 +1506,18 @@ static unsigned long fm_prev_filt_ms     = 0;
 // fm_rider_course_deg is -1.0f when the rider is too slow for a trustworthy course.
 static float         fm_rider_course_deg = -1.0f;  // 0-360 deg clockwise from North, or -1 = invalid
 static float         fm_rider_speed_kmh  = 0.0f;   // km/h
+
+// F1-F4 speed-governor memory. Updated only on a fresh accepted RX GPS-speed sample, so the 10 Hz
+// navigation loop cannot integrate the same measurement repeatedly. The integrator starts open at
+// 255; the independent engage ramp still provides the safe 0->full activation edge.
+static bool          fm_speed_gov_init             = false;
+static uint8_t       fm_speed_gov_mode             = 0xFF;
+static unsigned long fm_speed_gov_last_gps_ms      = 0;
+static float         fm_speed_filtered_kmh         = 0.0f;
+static float         fm_speed_target_filtered_kmh  = 0.0f;
+static float         fm_speed_integrator           = 255.0f;
+static float         fm_speed_cap_slewed            = 255.0f;
+static bool          fm_speed_other_cap_active     = false;
 
 // Side-zone Schmitt state: true = apply the diagonal offset, false = sit directly behind.
 static bool          fm_diagonal_engaged = false;
@@ -2229,6 +2255,142 @@ static bool checkFmFaultConditions()
   return true;
 }
 
+// Cold-start the F1-F4 speed governor. Called at every genuine automatic-control edge and while FM
+// is idle. Starting the learned cap open at 255 avoids suppressing acceleration below the requested
+// speed; the engage ramp remains the independent, subtract-only activation limiter.
+static void fmResetSpeedGovernor()
+{
+  fm_speed_gov_init            = false;
+  fm_speed_gov_mode            = 0xFF;
+  fm_speed_gov_last_gps_ms     = 0;
+  fm_speed_filtered_kmh        = 0.0f;
+  fm_speed_target_filtered_kmh = 0.0f;
+  fm_speed_integrator          = 255.0f;
+  fm_speed_cap_slewed          = 255.0f;
+  fm_speed_other_cap_active    = false;
+}
+
+// Compute the requested F1-F4 vehicle speed. F1-F3 may close at rider speed + 10 km/h. F4 varies
+// between rider speed - 10 and rider speed + 10 from signed along-track gap error. In every mode a
+// non-zero boogie_vmax is an absolute ceiling; zero skips only that clamp and never disables the
+// rider-relative governor.
+static float fmSpeedTargetKmh(float front_along_m, uint8_t mode)
+{
+  float rider_kmh = fm_rider_speed_kmh;
+  if (!isfinite(rider_kmh) || rider_kmh < 0.0f) rider_kmh = 0.0f;
+
+  float target_kmh;
+  if (mode == 4) {
+    float d_front = usrConf.min_dist_m + usrConf.followme_smoothing_band_m;
+    if (d_front < 0.5f) d_front = 0.5f;
+
+    float control_band = usrConf.followme_smoothing_band_m;
+    if (control_band < 1.0f) control_band = 1.0f;
+
+    float along_m = isfinite(front_along_m) ? front_along_m : 0.0f;
+    float correction = (d_front - along_m) / control_band;
+    if (correction >  1.0f) correction =  1.0f;
+    if (correction < -1.0f) correction = -1.0f;
+    target_kmh = rider_kmh + (kFmClosingMarginKmh * correction);
+  } else {
+    target_kmh = rider_kmh + kFmClosingMarginKmh;
+  }
+
+  if (target_kmh < 0.0f) target_kmh = 0.0f;
+  float absolute_max_kmh = usrConf.boogie_vmax_in_followme_kmh;
+  if (isfinite(absolute_max_kmh) && absolute_max_kmh > 0.1f &&
+      target_kmh > absolute_max_kmh) {
+    target_kmh = absolute_max_kmh;
+  }
+  return target_kmh;
+}
+
+// Stateful PI speed limiter for F1-F4. It updates only when gps_last_ms changes. The integrator
+// learns the cap required at zero speed error instead of forcing cap 0 at the requested speed.
+// Anti-windup blocks positive integration while approach/align/engage is the tighter cap; negative
+// error may still remove stored cap. A separate 2 km/h overspeed band is the deterministic backstop.
+static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode)
+{
+  float raw_target_kmh = fmSpeedTargetKmh(front_along_m, mode);
+  float raw_speed_kmh  = gps_last_speed_kmh;
+  if (!isfinite(raw_speed_kmh) || raw_speed_kmh < 0.0f) raw_speed_kmh = 0.0f;
+
+  if (!fm_speed_gov_init) {
+    fm_speed_gov_init             = true;
+    fm_speed_gov_mode             = mode;
+    fm_speed_gov_last_gps_ms      = gps_last_ms;
+    fm_speed_filtered_kmh         = raw_speed_kmh;
+    fm_speed_target_filtered_kmh  = raw_target_kmh;
+    fm_speed_integrator           = 255.0f;
+    fm_speed_cap_slewed           = 255.0f;
+    fm_speed_other_cap_active     = false;
+  } else if (fm_speed_gov_mode != mode) {
+    // Bumpless mode transfer: the target filter moves to the new geometry immediately, while the
+    // learned cap starts from the value that was actually being exposed before the mode change.
+    fm_speed_gov_mode             = mode;
+    fm_speed_target_filtered_kmh  = raw_target_kmh;
+    fm_speed_integrator           = fm_speed_cap_slewed;
+    fm_speed_other_cap_active     = false;
+  }
+
+  bool fresh_speed_sample = (gps_last_ms != 0 && gps_last_ms != fm_speed_gov_last_gps_ms);
+  if (fresh_speed_sample) {
+    float dt_s = (float)(gps_last_ms - fm_speed_gov_last_gps_ms) / 1000.0f;
+    if (dt_s < 0.05f || dt_s > 1.5f) dt_s = 0.1f;
+    fm_speed_gov_last_gps_ms = gps_last_ms;
+
+    float speed_alpha = dt_s / (kFmSpeedFilterTauS + dt_s);
+    float target_alpha = dt_s / (kFmSpeedTargetFilterTauS + dt_s);
+    fm_speed_filtered_kmh += speed_alpha * (raw_speed_kmh - fm_speed_filtered_kmh);
+    fm_speed_target_filtered_kmh +=
+        target_alpha * (raw_target_kmh - fm_speed_target_filtered_kmh);
+
+    float error_kmh = fm_speed_target_filtered_kmh - fm_speed_filtered_kmh;
+    if (fabsf(error_kmh) < kFmSpeedDeadbandKmh) error_kmh = 0.0f;
+
+    float p_term = kFmSpeedKp * error_kmh;
+    float unsaturated = fm_speed_integrator + p_term;
+    bool pushes_high = (unsaturated >= 255.0f && error_kmh > 0.0f);
+    bool pushes_low  = (unsaturated <=   0.0f && error_kmh < 0.0f);
+    bool blocked_by_other_cap = fm_speed_other_cap_active && error_kmh > 0.0f;
+
+    if (!pushes_high && !pushes_low && !blocked_by_other_cap) {
+      fm_speed_integrator += kFmSpeedKi * error_kmh * dt_s;
+      if (fm_speed_integrator > 255.0f) fm_speed_integrator = 255.0f;
+      if (fm_speed_integrator <   0.0f) fm_speed_integrator =   0.0f;
+    }
+
+    float requested_cap = fm_speed_integrator + p_term;
+    if (requested_cap > 255.0f) requested_cap = 255.0f;
+    if (requested_cap <   0.0f) requested_cap =   0.0f;
+
+    float max_rise = kFmSpeedCapRisePerS * dt_s;
+    float max_fall = kFmSpeedCapFallPerS * dt_s;
+    if (requested_cap > fm_speed_cap_slewed + max_rise) {
+      fm_speed_cap_slewed += max_rise;
+    } else if (requested_cap < fm_speed_cap_slewed - max_fall) {
+      fm_speed_cap_slewed -= max_fall;
+    } else {
+      fm_speed_cap_slewed = requested_cap;
+    }
+  }
+
+  if (fm_speed_target_filtered_kmh <= 0.1f) return 0;
+
+  float cap = fm_speed_cap_slewed;
+  float overspeed_kmh = fm_speed_filtered_kmh - fm_speed_target_filtered_kmh;
+  if (overspeed_kmh > 0.0f) {
+    float overspeed_cap = 255.0f *
+        (1.0f - (overspeed_kmh / kFmSpeedOverspeedBandKmh));
+    if (overspeed_cap < 0.0f) overspeed_cap = 0.0f;
+    if (overspeed_cap < cap) cap = overspeed_cap;
+  }
+
+  if (cap > 255.0f) cap = 255.0f;
+  if (cap <   0.0f) cap =   0.0f;
+  return (uint16_t)cap;
+}
+
 // ------------------------------------------------------------
 // fmComputeThrottleCap - the FM throttle cap chain
 // ------------------------------------------------------------
@@ -2243,10 +2405,11 @@ static bool checkFmFaultConditions()
 //   Cap 2 Approach ramp  - F1-3: linear 255 -> 0 across the smoothing band, same shape as RTM's
 //                          approach decel zone. F4 omits it because slowing while the rider catches
 //                          the buggy would collapse the front gap; the hard stop still applies.
-//   Cap 3 Speed governor - F1-3: min(boogie_vmax, rider_speed + closing margin). F4 varies that
-//                          target around rider speed from the signed along-track error. A non-zero
-//                          boogie_vmax is the final absolute ceiling; zero disables only that
-//                          ceiling. Both use the buggy's GPS speed.
+//   Cap 3 Speed governor - stateful PI limiter. F1-3 target rider speed + closing margin. F4 varies
+//                          that target around rider speed from signed along-track error. A non-zero
+//                          boogie_vmax clamps the target; zero skips only that absolute clamp. The
+//                          learned holding cap remains non-zero at the requested speed, and a hard
+//                          overspeed band removes cap between target and target + 2 km/h.
 //   Cap 4 Align phase    - while the heading error is large, clamp to ~5% so the buggy pivots
 //                          toward the target instead of driving away from it.
 //   Cap 5 Engage ramp    - 0 -> full over kFmEngageRampMs on every entry into FM_ACTIVE, so
@@ -2255,7 +2418,7 @@ static bool checkFmFaultConditions()
 // Inputs:  dist_m - radial buggy-to-rider distance; front_along_m - signed F4 forward distance;
 //          mode - active geometry; now - millis() for this tick
 // Returns: the winning cap, 0-255
-// Side effects: none.
+// Side effects: updates the F1-F4 speed PI/filter state.
 // ------------------------------------------------------------
 static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
                                      uint8_t mode, unsigned long now)
@@ -2278,43 +2441,9 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
     if (c < cap) cap = c;
   }
 
-  // ---- Cap 3: speed governor ----
-  float gov;
-  if (in_front) {
-    // Pacer control on the signed along-track gap. Too close in front -> permit up to the rider
-    // speed plus the existing closing margin. Too far ahead -> cap below rider speed so the rider
-    // closes the gap. This remains subtract-only: it can expose more of the human's trigger, never
-    // create throttle the human did not request.
-    float d_front = min_dist + band;
-    if (d_front < 0.5f) d_front = 0.5f;
-    float control_band = band;
-    if (control_band < 1.0f) control_band = 1.0f;
-    float correction = (d_front - front_along_m) / control_band;
-    if (correction >  1.0f) correction =  1.0f;
-    if (correction < -1.0f) correction = -1.0f;
-    gov = fm_rider_speed_kmh + (kFmClosingMarginKmh * correction);
-
-    // Zero has the same meaning in every FM mode: no absolute vehicle-speed ceiling. The
-    // rider-relative gap governor above remains active; only the final absolute clamp is skipped.
-    if (usrConf.boogie_vmax_in_followme_kmh > 0.1f &&
-        gov > usrConf.boogie_vmax_in_followme_kmh) {
-      gov = usrConf.boogie_vmax_in_followme_kmh;
-    }
-    if (gov < 0.1f) gov = 0.0f;
-  } else {
-    gov = fm_rider_speed_kmh + kFmClosingMarginKmh;
-    if (gov > usrConf.boogie_vmax_in_followme_kmh) gov = usrConf.boogie_vmax_in_followme_kmh;
-  }
-
-  if (in_front && gov <= 0.1f) {
-    cap = 0;
-  } else if (gov > 0.1f) {
-    float speed_frac = gps_last_speed_kmh / gov;            // buggy's own GPS speed vs the target
-    if (speed_frac > 1.0f) speed_frac = 1.0f;
-    if (speed_frac < 0.0f) speed_frac = 0.0f;
-    uint16_t c = (uint16_t)((1.0f - speed_frac) * 255.0f);
-    if (c < cap) cap = c;
-  }
+  // ---- Cap 3: stateful PI speed governor ----
+  uint16_t speed_cap = fmComputeSpeedGovernorCap(front_along_m, mode);
+  if (speed_cap < cap) cap = speed_cap;
 
   // ---- Cap 4: align phase ----
   float abs_err = (g_heading_error_dx10 != 0x7FFF) ?
@@ -2331,6 +2460,11 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
       if (c < cap) cap = c;
     }
   }
+
+  // Feed the final arbitration result back into the next PI update. Positive integration is frozen
+  // while approach, align or engage is the tighter cap, so the speed integrator cannot wind up behind
+  // another limiter. Overspeed correction remains allowed because it only removes stored authority.
+  fm_speed_other_cap_active = (cap < speed_cap);
 
   return cap;
 }
@@ -2374,6 +2508,7 @@ static void fmEnterIdle()
   fm_prev_filt_ms     = 0;
   fm_rider_course_deg = -1.0f;
   fm_rider_speed_kmh  = 0.0f;
+  fmResetSpeedGovernor();
 
   // V2.5-Evo - 2026-07-20 - R1/R2: leaving FM entirely drops the separation proof with it.
   // Whatever put us here (mode 0, RTM preemption, mode-age expiry, GPS/FM disabled) ends the
@@ -3183,6 +3318,7 @@ void runFmLoop()
       prev_heading_src_valid  = false;
       prev_heading_error_deg  = 0.0f;
       prev_steering_update_ms = 0;
+      fmResetSpeedGovernor();
 
       bool first_engagement = !active_session;
       fm_state = FM_ACTIVE;
