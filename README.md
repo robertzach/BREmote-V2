@@ -538,6 +538,11 @@ F1–F3 request rider speed +10 km/h. F4 continuously varies its request between
 +10 km/h from the signed front-gap error. The PI governor learns the throttle cap needed to hold the
 requested speed; a separate overspeed backstop removes the cap between target and target +2 km/h.
 
+A compass-vs-GPS-course disagreement no longer blocks F1–F4 by itself. It latches the compass out
+of the heading ladder, while a valid live GPS COG or the short held-COG bridge may still engage and
+steer Follow-Me. If COG is missing, stale or frozen after that hold, FM still has no valid heading
+and remains inactive or ends the active run through its normal heading-fault path.
+
 While FM is following, a deliberate manual steering input temporarily takes steering priority
 without cancelling FM; the FM throttle cap and separation proof remain active, and centring the
 steering input returns control to FM. Releasing the trigger still stops the motor immediately and
@@ -849,9 +854,18 @@ The data logger is the primary tool for validating and tuning the FM/FM_RETURN s
 
 **Storage note:** if SPIFFS fills too quickly during long sessions, lower the rate with `?lograte`, **don't trim columns** — every diagnostic field is there to make the controller observable when something goes wrong, and the cost of dropping them is much greater than the storage savings.
 
-**Key columns for steering tuning (full set is 31 columns):**
+**Key columns for steering tuning:** level 3 contains 31 columns; current level 4 (`log_level=4`)
+contains 64 columns after appending the four GPS/loop diagnostics and the 29-column FM engage audit.
 
 > The last five — `remote_error`, `effective_steer`, `tx_distance_m`, `rssi_dbm`, `snr_db` — were added in the 2026-07-19 and 2026-07-24 updates. `rssi_dbm` / `snr_db` are the LoRa link quality measured **at the RX for the packets the TX sent**, i.e. the *command* link, which is the direction that matters for control. `-999` / `-99.0` / `-1.0` are the "no data" sentinels.
+
+For Follow-Me engage diagnosis, select `log_level=4`. The most useful appended columns are
+`fm_state`, `fm_block_reason`, `fm_distance_m`, `fm_d_engage_m`, `fm_sep_dwell_ms`,
+`fm_sep_latched`, `fm_return_candidate`, `fm_can_be_active`, `fm_front_angle_deg` and
+`fm_front_warning`. The remaining named `fm_*_ok` columns expose each individual GPS, heading,
+link, trigger and position gate. `fm_block_reason` is already decoded as text such as
+`below_d_engage`, `separation_dwell`, `return_candidate`, `no_heading` or `link`; no bit-mask
+decoding is required. Existing 65-byte Deep log files retain their original 35-column export.
 
 <details>
 <summary><strong>Click to expand: Full log column reference (14 fields with tuning relevance)</strong></summary>

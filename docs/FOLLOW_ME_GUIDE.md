@@ -35,7 +35,9 @@ Follow-Me needs, for the buggy to actually engage and follow:
 - A **paired** TX and RX (your remote and the buggy talk to each other).
 - **GPS fix on both** the remote and the buggy.
 - A healthy **radio link** and **telemetry flowing**.
-- A **calibrated compass** on the buggy (`?compasscal`).
+- A valid buggy heading: normally GPS course-over-ground while moving, with a calibrated compass
+  (`?compasscal`) as the low-speed fallback. If the two disagree, the compass is excluded and FM may
+  still engage on valid GPS COG; it cannot engage without either a live or briefly held GPS course.
 
 You can *arm* Follow-Me before all of these are perfect (see §7 — Readiness), but it will
 not *engage* until they are.
@@ -146,7 +148,8 @@ Not every interruption is the same. Follow-Me tells them apart:
 | **`min_dist_m` is reached** | stop latch | cap 0 until trigger release; distance recovery alone does nothing; release restores manual cap 255 and clears separation proof | no re-arm, but new `>D_engage` proof |
 | **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
 | **F4 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
-| **GPS, compass, or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
+| **GPS heading/position or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
+| **Compass disagrees with valid GPS COG** | GPS-only degradation | compass is excluded; FM may engage/continue on live or briefly held COG | **no** |
 
 The 3-second geometry warning continues even when the trigger is released and never changes the
 control path. A real sensor/link failure is different: FM steps fully out and waits for a deliberate
@@ -256,7 +259,7 @@ hands steering back to FM. This is a direct takeover, not continuous target-angl
 1. The buggy moves only while you hold the throttle trigger.
 2. Follow-Me only steers and only reduces throttle — never adds.
 3. Releasing the trigger stops the buggy at the hardware level, in every mode.
-4. Manual steering has priority while deliberately deflected; genuine GPS / compass / radio faults still end FM.
+4. Manual steering has priority while deliberately deflected; genuine GPS-heading/position or radio faults still end FM. Compass disagreement alone degrades to GPS COG.
 5. FM_RETURN is a guarded Follow-Me state; there is no separate RTM gesture or mode.
 
 *See `BUGGY_FOIL_DOMAIN.md` for the domain model and `DESIGN_FOLLOW_ME.md` for the full

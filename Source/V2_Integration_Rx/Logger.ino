@@ -1,9 +1,11 @@
+// V2.5-Evo - 2026-08-27 - Log mirror follows the GPS-only disagreement degradation: a per-tick compass-vs-COG disagreement no longer vetoes valid COG, so rtm_source/confidence report GPS_COG 1/3 while the controller uses it. The persistent latch still excludes only compass branches; held COG remains 1/2. Read-only mirror change, no record/packet/config/SW_VERSION change.
+// V2.5-Evo - 2026-08-27 - Level-4 logs now append an 18-byte Follow-Me engage-audit snapshot: exact mode/state/block reason, cap, radial distance/effective D_engage, rider speed, separation-dwell progress, F4 angle and every relevant gate bit. The snapshot is published by runFmLoop(), not recomputed here, so logging cannot disagree with or mutate the controller. New Deep records are 83 bytes; their first 65 bytes remain byte-identical to the old Deep layout. Header selection and row formatting use the file's stored record_size, so existing 65-byte logs still export with their original 35-column CSV while new files export the FM columns. The 8-byte BRLG header layout and format version are unchanged; no confStruct/SW_VERSION change.
 // V2.5-Evo - 2026-08-17 - CRITICAL MAINTENANCE contract honoured again, same day, because the controller moved again (log mirror only): a standing heading-disagreement latch no longer just withdraws the compass, it drops the WHOLE ladder to the mode-0 path — GPS course only — so getRtmHeading() now returns NONE below rtm_cog_min_speed_kmh instead of serving a held COG, and returns NONE in mode 2 instead of serving the live compass. Two branches of this duplicate had to follow or the CSV would contradict the controller in exactly the state a rider would be reporting: (1) the COG-HOLD branch is now gated on !headingDisagreeLatched(), so a degraded tick logs src 0 / conf 0 rather than claiming a held GPS course the controller did not serve; (2) the mode-2 branch is gated the same way, so a diagnostic-mode session whose compass has been proven wrong logs NONE rather than src 3 / conf 2 COMPASS_LIVE. The compass-snapshot branch keeps the gate it was given this morning. Everything else about the mirror is unchanged, and the ORDER still matches the controller exactly: disagreement veto, live COG, held COG, compass snapshot. STRICTLY READ-ONLY: two more calls to the same read-only accessor from loggerTask, no controller state written, no timing changed. NO new column, no new rtm_source value, no record-size change — existing logs stay parseable. No confStruct change, no VescLogData change, sizeof stays 192, SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - CRITICAL MAINTENANCE contract honoured again (log mirror only): convertToLogData()'s duplicate heading ladder now reads the heading-disagreement LATCH, not just the per-tick verdict. getRtmHeading() withdraws the compass fallback entirely once the compass has been caught disagreeing with GPS course for kHeadingDisagreeMs and returns NONE, but this mirror kept falling through to the compass branch and logging rtm_source = 2 / rtm_confidence = 2 on those ticks — the CSV asserted a compass heading at MEDIUM confidence for ticks on which the controller had refused the compass and was holding straight. That was unreachable in an RTM run until the latch clears became edge-triggered; it is reachable now, so the log would actively lie about the heading source in exactly the new refusal case a rider will report. The compass-snapshot branch is gated on !headingDisagreeLatched(), positioned exactly where the controller checks it — BELOW the last-good-COG hold (a held COG is still logged src 1 / conf 2 while the fault stands, since a held GPS course is not the sensor under suspicion) and ABOVE the compass fallback — so a gated tick falls out of the else-if chain as src 0 / conf 0 = NONE, the pair getRtmHeading() actually returns. Strictly READ-ONLY: one call to a read-only accessor from loggerTask, no controller state written, no timing changed. NO new column, no new rtm_source value, no record-size change — existing logs stay parseable. No confStruct change, no VescLogData change, sizeof stays 192, SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-16 - MID-RUN ABORT for ?download and ?deleteallogs, plus the MISSING WATCHDOG FEED in deleteAllLogFiles(). Both commands now ask rxAbortIfEngaged() inside their per-item loop, so an RTM/FM engagement that begins AFTER the command started stops it instead of freezing every safety gate for the rest of it — on ?download that was MINUTES (the code's own note records ~3 min for a ~350 kB file), which is by far the largest blind spot of any command on this board. ?download checks at the RECORD boundary, so no half-formatted row reaches the wire, closes the file on the way out, and prints a DIFFERENT end-of-transfer marker: "=== END CSV DATA ===" is never printed after an abort, because every reader treats that line as "the whole file arrived" and printing it over a truncated stream would silently pass a partial log off as complete; the abort marker names itself and carries the record count actually sent. ?deleteallogs checks at the WHOLE-FILE boundary before each SPIFFS.remove(), so every file is either fully deleted or fully untouched, and it now reports how many were ACTUALLY deleted instead of claiming completion over a partial run. Separately, its loop gained the watchdog feed it never had: initWatchdog() now arms the 3000 ms panic WDT on the first boot after a version bump where it previously did not, and on a full SPIFFS the garbage collection each remove() triggers can walk the loop past the timeout and panic-reboot mid-delete. The feed is gated on g_wdt_active, the same guard PWM.ino and Radio.ino use. NO change to the log file format, record layout or column set — existing logs stay parseable — and no change to either command's behaviour or timing when it runs to completion. No confStruct change, no VescLogData change, sizeof stays 192, SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-16 - CRITICAL MAINTENANCE contract honoured (log mirror only; no new column, no new rtm_source value, no record-size change, no control path touched): the 2026-08-16 COG-hold change was mirrored into convertToLogData()'s STAGE 2 guards but NOT into the hold itself, so on every tick the controller was serving the last good COG (confidence 2, up to kCogHoldMs after cog_valid drops) the log recorded COMPASS_SNAPSHOT or NONE instead — the rtm_source / rtm_confidence columns misdescribed the exact source transitions these logs are being read to diagnose. The duplicate ladder now re-serves cog_last_good_deg / cog_last_good_ms in the same position and on the same terms the controller does (after the disagreement veto and the live-COG branch, gated on mode 1 and !cog_frozen_moving, ahead of the compass fallback) and logs it as src 1 / conf 2 — GPS_COG at MEDIUM, the pair getRtmHeading() actually returns, so held and live COG stay distinguishable without touching the CSV format. Strictly READ-ONLY: this mirror runs in loggerTask and writes no controller state, no timing, nothing. The 5 s escalation latch is still deliberately not read here. No confStruct change, no VescLogData change, sizeof stays 192, SW_VERSION stays 35.
 // V2.5-Evo - 2026-07-25 - STAGE 2 (log mirror only, no new column, no record-size change): the inline getRtmHeading() duplicate in convertToLogData() now applies the same two heading-trust guards RTMState.ino gained — guard 1 (COG rejected when its VALUE has been frozen longer than kRtmCogFrozenMs while gps_last_speed_kmh >= rtm_cog_min_speed_kmh, and no compass promotion in that state) and guard 2 (per-tick COG-vs-compass-snapshot disagreement beyond kHeadingDisagreeDeg = no source at all). Without this, rtm_source/rtm_confidence would keep logging "GPS COG, HIGH" for ticks where the controller was actually holding straight, which is precisely the blindness Stage 0 was built to end. The 5 s escalation latch is deliberately NOT read here: this runs in loggerTask and the mirror stays side-effect-free and per-tick. No confStruct change, no VescLogData change, sizeof stays 184, SW_VERSION stays 34, no control path touched.
-// V2.5-Evo - 2026-07-25 - STAGE 0 PART B+C (instrumentation only): every log file now opens with an 8-byte self-describing header (magic "BRLG", format version, log level, record size) so a reader can parse a VARIABLE record size instead of assuming sizeof(VescLogData); the level is latched once per FILE in createNewLogFile() so changing the setting mid-session cannot corrupt an open file; level 4 writes a 65-byte record (59-byte level-3 record + gps_sent_per_s, cog_frozen_s, mux_err_cnt, loop_max_ms); ?download reads the header, steps by header.record_size, refuses a file with no valid magic in plain English instead of emitting garbage, and formats rows through the single shared logFormatCsvRow() that the WiFi path also calls — so the two CSV outputs cannot drift apart again. No confStruct change, sizeof stays 184, SW_VERSION stays 34, no control path touched.
+// V2.5-Evo - 2026-07-25 - STAGE 0 PART B+C (instrumentation only): every log file now opens with an 8-byte self-describing header (magic "BRLG", format version, log level, record size) so a reader can parse a VARIABLE record size instead of assuming sizeof(VescLogData); the level is latched once per FILE in createNewLogFile() so changing the setting mid-session cannot corrupt an open file; that revision's level 4 wrote the now-legacy 65-byte record (59-byte level-3 record + gps_sent_per_s, cog_frozen_s, mux_err_cnt, loop_max_ms); ?download reads the header, steps by header.record_size, refuses a file with no valid magic in plain English instead of emitting garbage, and formats rows through the single shared logFormatCsvRow() that the WiFi path also calls — so the two CSV outputs cannot drift apart again. No confStruct change, sizeof stays 184, SW_VERSION stays 34, no control path touched.
 // V2.5-Evo - 2026-07-24 - F9: +3 CSV columns (tx_distance_m, rssi_dbm, snr_db); 28→31 columns; VescLogData +6 bytes; distance decoded from telemetry.rtm_distance, RSSI/SNR from Radio.ino cache (g_last_rssi_dbm/g_last_snr_db); appended for parser compat; no confStruct change, SW_VERSION unchanged
 // V2.5-Evo - 2026-07-19 - Rex INFO: corrected stale "ESP32-S3 dual-core / Core 0/Core 1" wording in convertToLogData() vescMutex comment to ESP32-C3 single-core / FreeRTOS-preemption (comment-only)
 // V2.5-Evo - 2026-07-19 - FM triage: +1 CSV column (effective_steer, the steering byte calcPWM actually applied); 27→28 columns; VescLogData +1 byte; no-fix guard mirrored into inline getRtmHeading() duplicate (src/conf forced NONE without a fresh RX GPS fix, matching RTMState.ino)
@@ -61,6 +63,11 @@ extern volatile bool g_wdt_active;
 // READ-ONLY, and it can only ever be read: the accessor returns the flag and cannot set,
 // clear or age it, which is exactly why the mirror is allowed to consult it at all.
 static bool headingDisagreeLatched();
+
+// Read-only, internally synchronised snapshot of the exact FM gate decisions made by runFmLoop().
+// Defined in RTMState.ino later in the same Arduino translation unit. The logger never recomputes
+// controller gates: doing so here could diverge from the control tick it is meant to explain.
+static bool fmReadLogDiagSnapshot(FmLogDiagSnapshot *out);
 
 #define MIN_FREE_SPACE_KB 500  
 
@@ -323,24 +330,10 @@ VescLogData convertToLogData() {
 
       bool cog_valid = cog_fresh_ts && cog_moving && !cog_frozen_moving;
 
-      // GUARD 2 mirror (per-tick verdict only). The 5 s escalation latch lives in RTMState.ino and
-      // is NOT read here: this function runs in loggerTask, so the mirror must stay side-effect-free
-      // and must not depend on loop-task timing. A logged NONE therefore reflects the disagreement
-      // that was measurable at this instant, which is what rtm_source/rtm_confidence describe.
-      bool compare_possible = (mode == 1) && cog_valid &&
-                              (compass_snapshot_heading >= 0.0f) && (compass_snapshot_ms > 0) &&
-                              ((now_ms - compass_snapshot_ms) < (unsigned long)kHeadingCompareSnapMs);
-      bool disagree_now = false;
-      if (compare_possible) {
-        float d = gps_last_course_deg - compass_snapshot_heading;   // wrap-correct across 0/360
-        while (d >  180.0f) d -= 360.0f;
-        while (d < -180.0f) d += 360.0f;
-        disagree_now = (fabsf(d) > kHeadingDisagreeDeg);
-      }
-
-      if (disagree_now) {
-        // Both sources distrusted — src/conf stay 0, matching getRtmHeading() returning NONE.
-      } else if (cog_valid) {
+      // A compass disagreement is tracked and latched by getRtmHeading() in the loop task. It no
+      // longer vetoes a valid GPS course, so the side-effect-free logger mirror selects COG here
+      // without re-evaluating the compass comparison.
+      if (cog_valid) {
         src    = 1;     // GPS_COG
         conf   = 3;     // HIGH
         chosen = gps_last_course_deg;
@@ -367,8 +360,8 @@ VescLogData convertToLogData() {
         // being steered on IS a GPS course (src 1), and confidence 2 is precisely what
         // getRtmHeading() returns for it — a real measurement, but a stale one. A live COG still
         // logs 1/3, so held and live remain distinguishable in the CSV without changing its format.
-        // ORDER MATTERS and mirrors the controller exactly: after the disagreement veto and the live
-        // COG branch, gated on mode 1 (mode 0 returns NONE before the hold, mode 2 never reaches
+        // ORDER MATTERS and mirrors the controller exactly: after disagreement bookkeeping and the
+        // live COG branch, gated on mode 1 (mode 0 returns NONE before the hold, mode 2 never reaches
         // here) and on !cog_frozen_moving (a frozen COG is refused before the hold is consulted),
         // and ahead of the compass fallback.
         // STRICTLY SIDE-EFFECT-FREE: three reads and nothing else. This runs in loggerTask; the two
@@ -382,24 +375,9 @@ VescLogData convertToLogData() {
         // frozen while moving. In that state one source is provably dead and the other cannot be
         // cross-checked, so the controller holds straight instead of promoting the survivor, and
         // the log must say the same thing.
-        // V2.5-Evo - 2026-08-17 - ...and NOT while the heading-disagreement latch stands.
-        // WHAT WAS WRONG: this mirror read only the per-tick verdict (disagree_now) and never the
-        // SUSTAINED fault. getRtmHeading() withdraws the compass fallback outright once the
-        // compass has been caught disagreeing with GPS course for kHeadingDisagreeMs, and returns
-        // NONE. On exactly those ticks this duplicate still fell through to here and wrote
-        // rtm_source = 2 / rtm_confidence = 2 — the CSV reported a compass heading at MEDIUM
-        // confidence for ticks on which the controller had refused the compass and was holding
-        // straight. The log contradicted the controller in precisely the refusal a rider would be
-        // reporting, which is the one case these two columns exist to explain.
-        // WHY IT MATTERS NOW: the clears became edge-triggered, so the latch can stand across an
-        // engagement for the first time — this branch is reachable during a real run, not just in
-        // theory.
-        // POSITION MIRRORS THE CONTROLLER EXACTLY. V2.5-Evo - 2026-08-17: that position moved. The
-        // controller now leaves at the mode-0 return, which is ABOVE both the held-COG hold and
-        // this compass fallback, so a standing fault withdraws BOTH — the same gate therefore also
-        // appears on the hold branch above, and the two branches fall out of the else-if chain
-        // together as src 0 / conf 0 = NONE, which is what getRtmHeading() returns. A live COG is
-        // untouched by any of it and still logs src 1 / conf 3.
+        // A standing heading-disagreement latch withdraws this compass fallback. Live COG and the
+        // held-COG branch above remain valid and are logged as GPS_COG with confidence 3 or 2.
+        // Only when neither GPS-derived heading is available does the mirror remain at NONE.
         // SIDE-EFFECT-FREE: one read of a read-only accessor. This runs in loggerTask and writes
         // no controller state and changes no timing. No new column, no new rtm_source value, no
         // record-size change — existing logs stay parseable.
@@ -483,8 +461,8 @@ VescLogData convertToLogData() {
 // ============================================================
 //
 // What it does:
-//   Fills the four extra fields that level 4 appends to the standard level-3 record. It reads
-//   the free-running diagnostic counters declared in BREmote_V2_Rx.h and does no I/O.
+//   Fills the GPS/loop diagnostics and the FM engage-audit snapshot that level 4 appends to the
+//   standard level-3 record. It reads controller-published state and does no I/O.
 //
 // Inputs:  rec - a VescLogDataL4 whose .base has already been filled by convertToLogData()
 // Outputs: none (rec is filled in place)
@@ -523,6 +501,29 @@ static void fillLevel4Diag(VescLogDataL4 &rec)
   g_diag_loop_max_us_log = 0;
   uint32_t max_ms = (max_us + 500UL) / 1000UL;
   rec.loop_max_ms = (max_ms > 0xFFFEUL) ? 0xFFFE : (uint16_t)max_ms;
+
+  // Exact Follow-Me engage snapshot published by runFmLoop(). This is a copy of controller facts,
+  // not a logger-side mirror, so a CSV row can name the real blocker without changing FM timing.
+  FmLogDiagSnapshot fm = {};
+  if (fmReadLogDiagSnapshot(&fm)) {
+    rec.fm_gate_flags       = fm.gate_flags;
+    rec.fm_distance_dx10    = fm.distance_dx10;
+    rec.fm_d_engage_dx10    = fm.d_engage_dx10;
+    rec.fm_rider_speed_dx10 = fm.rider_speed_dx10;
+    rec.fm_sep_dwell_ms     = fm.sep_dwell_ms;
+    rec.fm_front_angle_dx10 = fm.front_angle_dx10;
+    rec.fm_mode             = fm.mode;
+    rec.fm_state            = fm.state;
+    rec.fm_block_reason     = fm.block_reason;
+    rec.fm_throttle_cap     = fm.throttle_cap;
+  } else {
+    rec.fm_distance_dx10    = 0xFFFF;
+    rec.fm_d_engage_dx10    = 0xFFFF;
+    rec.fm_rider_speed_dx10 = 0xFFFF;
+    rec.fm_front_angle_dx10 = 0x7FFF;
+    rec.fm_block_reason     = FM_LOG_BLOCK_UNKNOWN;
+    rec.fm_throttle_cap     = 255;
+  }
 }
 
 // Check and manage SPIFFS space
@@ -813,8 +814,8 @@ void downloadLogFile(const char* filename) {
   // ============================================================
   // V2.5-Evo - 2026-07-25 - STAGE 0 PART B: read the self-describing file header FIRST.
   //
-  // Records are no longer a fixed size — a level-4 file writes 65-byte records where a level-3
-  // file writes 59 — so the reader must be told the size by the file rather than assuming
+  // Records are no longer a fixed size — current level-4 files write 83-byte records (legacy Deep
+  // files use 65) where a level-3 file writes 59 — so the reader must take the size from the file
   // sizeof(VescLogData). Stepping by the wrong size does not fail loudly; it walks off the
   // record boundary and prints thousands of lines of plausible-looking nonsense, which is worse
   // than no data at all. Hence: no valid header, no output.
@@ -853,7 +854,7 @@ void downloadLogFile(const char* filename) {
   // download path emits the same macro, so the two can no longer drift. The header printed must
   // match the level the file was actually RECORDED at (from its own header), not the level the
   // config happens to be set to now.
-  Serial.println((hdr.log_level >= 4) ? LOG_CSV_HEADER_L4 : LOG_CSV_HEADER_L3);
+  Serial.println(logCsvHeaderForRecord(hdr.log_level, hdr.record_size));
 
   uint8_t  rec_buf[sizeof(VescLogDataL4)];
   char     row[LOG_CSV_ROW_BUF];

@@ -437,8 +437,8 @@ struct confStruct {
     //   1 = Basic   — RESERVED for a future storage optimisation; CURRENTLY LOGS AS LEVEL 3.
     //   2 = VESC    — RESERVED for a future storage optimisation; CURRENTLY LOGS AS LEVEL 3.
     //   3 = Developer — the full 59-byte record this firmware has always written.
-    //   4 = Deep      — Developer plus the 6-byte diagnostic block (GPS sentence rate, COG
-    //       frozen-seconds, mux read-back error count, worst loop() time) = 65 bytes/record.
+    //   4 = Deep      — Developer plus GPS/loop diagnostics and the Follow-Me engage-audit
+    //       snapshot (mode/state/block reason, distance/D_engage, dwell and gates) = 83 bytes/record.
     // Levels 1 and 2 are ACCEPTED by the validator (so a rider can set them and a future
     // firmware will honour them) but are deliberately NOT silently ignored: they are documented
     // everywhere as falling back to level 3 until the smaller records are implemented.
@@ -953,7 +953,7 @@ static_assert(sizeof(VescLogData) == 59, "VescLogData size mismatch — check bi
 // byte-identical VescLogData, so the first 59 bytes of a level-4 record decode with exactly the
 // same code that decodes a level-3 record. That is what lets one CSV formatter serve both.
 //
-// The four fields answer the four open theories about the on-water failure:
+// The first four fields answer the four open theories about the on-water failure:
 //   gps_sent_per_s — is the GPS still delivering sentences at all, or has the feed died?
 //   cog_frozen_s   — how long has the COG VALUE been stuck? (The existing cog_age_ms_div10
 //                    column tracks the TIMESTAMP, which kept refreshing while the value was
@@ -967,8 +967,93 @@ struct __attribute__((packed)) VescLogDataL4 {
     uint8_t  cog_frozen_s;         // seconds since the COG VALUE last changed. SENTINEL 255 = no COG value has ever been seen this session. 254 = 254 s or longer.
     uint16_t mux_err_cnt;          // running session total of setUartMux() I2C read-back mismatches (saturates at 0xFFFE)
     uint16_t loop_max_ms;          // worst loop() body duration since the PREVIOUS record, in ms, rounded to nearest; reset to 0 after every record. 0 = no loop completed since the last record, or every loop was under 0.5 ms.
+
+    // Follow-Me engage audit block (2026-08-27). The first 65 bytes above are deliberately
+    // byte-identical to the original level-4 record. Readers use the record_size stored in each
+    // file header, so old 65-byte level-4 files remain readable while new files append this block.
+    uint32_t fm_gate_flags;        // FM_LOG_GATE_* bits below; expanded into named CSV columns
+    uint16_t fm_distance_dx10;     // current RX-to-TX radial distance x10 m; 0xFFFF = untrusted/N/A
+    uint16_t fm_d_engage_dx10;     // effective D_engage x10 m (configured/auto value after 8 m floor)
+    uint16_t fm_rider_speed_dx10;  // filtered rider speed x10 km/h; 0xFFFF = unavailable
+    uint16_t fm_sep_dwell_ms;      // current radial separation proof progress; 0..2000 ms
+    int16_t  fm_front_angle_dx10;  // F4 off-axis angle x10 deg; 0x7FFF = not F4/not measurable
+    uint8_t  fm_mode;              // live RX declaration: 1..4; 0/0xFF = disabled/not declared
+    uint8_t  fm_state;             // 0=IDLE, 1=ARMED, 2=ACTIVE, 4=STOPPING, 5=RETURN
+    uint8_t  fm_block_reason;      // FM_LOG_BLOCK_* below; formatter emits a stable text label
+    uint8_t  fm_throttle_cap;      // actual FM cap published to PWM, 0..255
 };
-static_assert(sizeof(VescLogDataL4) == 65, "VescLogDataL4 size mismatch — expected 59 (VescLogData) + 6 (level-4 block).");
+
+// The original level-4 record ended after loop_max_ms. Keep the exact size as an explicit
+// compatibility boundary: logCsvHeaderForRecord() and logFormatCsvRow() use it to decode old files.
+#define LOG_RECORD_SIZE_L4_LEGACY 65u
+static_assert(offsetof(VescLogDataL4, fm_gate_flags) == LOG_RECORD_SIZE_L4_LEGACY,
+              "The FM audit block must remain appended after the legacy 65-byte level-4 record.");
+static_assert(sizeof(VescLogDataL4) == 83,
+              "VescLogDataL4 size mismatch — expected 65 legacy bytes + 18-byte FM audit block.");
+
+// fm_gate_flags bit map. These are snapshots of the exact decisions made by runFmLoop(), not a
+// second implementation in the logger. A zero gate can mean either "failed" or "not evaluated"
+// after an earlier short-circuit; fm_block_reason names the first effective blocker.
+#define FM_LOG_GATE_MODE_OK             (1UL << 0)
+#define FM_LOG_GATE_TRIGGER_HELD        (1UL << 1)
+#define FM_LOG_GATE_GPS_NOT_REJECTED    (1UL << 2)
+#define FM_LOG_GATE_PHASE_B_OK          (1UL << 3)
+#define FM_LOG_GATE_TX_GPS_FRESH        (1UL << 4)
+#define FM_LOG_GATE_RX_GPS_FRESH        (1UL << 5)
+#define FM_LOG_GATE_HEADING_OK          (1UL << 6)
+#define FM_LOG_GATE_LINK_OK             (1UL << 7)
+#define FM_LOG_GATE_POSITION_OK         (1UL << 8)
+#define FM_LOG_GATE_DIST_OVER_ENGAGE    (1UL << 9)
+#define FM_LOG_GATE_SEP_LATCHED         (1UL << 10)
+#define FM_LOG_GATE_RETURN_CANDIDATE    (1UL << 11)
+#define FM_LOG_GATE_MIN_DIST_STOP       (1UL << 12)
+#define FM_LOG_GATE_HEADING_DISAGREE    (1UL << 13)
+#define FM_LOG_GATE_GEOMETRY_WARNING    (1UL << 14)
+#define FM_LOG_GATE_FRONT_WARNING       (1UL << 15)
+#define FM_LOG_GATE_CAN_BE_ACTIVE       (1UL << 16)
+#define FM_LOG_GATE_RETURN_EXIT_HOLD    (1UL << 17)
+#define FM_LOG_GATE_MANUAL_STEER        (1UL << 18)
+#define FM_LOG_GATE_DIVERGENCE_FAULT    (1UL << 19)
+
+enum FmLogBlockReason : uint8_t {
+  FM_LOG_BLOCK_NONE = 0,
+  FM_LOG_BLOCK_NO_DECLARATION,
+  FM_LOG_BLOCK_CONFIG_DISABLED,
+  FM_LOG_BLOCK_MODE_EXPIRED,
+  FM_LOG_BLOCK_STOPPING,
+  FM_LOG_BLOCK_RETURN_EXIT_HOLD,
+  FM_LOG_BLOCK_GPS_REJECTED,
+  FM_LOG_BLOCK_PHASE_B,
+  FM_LOG_BLOCK_TX_GPS_STALE,
+  FM_LOG_BLOCK_RX_GPS_STALE,
+  FM_LOG_BLOCK_NO_HEADING,
+  FM_LOG_BLOCK_LINK,
+  FM_LOG_BLOCK_POSITION,
+  FM_LOG_BLOCK_TRIGGER,
+  FM_LOG_BLOCK_BELOW_D_ENGAGE,
+  FM_LOG_BLOCK_SEPARATION_DWELL,
+  FM_LOG_BLOCK_RETURN_CANDIDATE,
+  FM_LOG_BLOCK_RETURN_ACTIVE,
+  FM_LOG_BLOCK_MIN_DIST_STOP,
+  FM_LOG_BLOCK_HEADING_DISAGREE,  // legacy CSV decoder only; current FM reports NO_HEADING + warning bit
+  FM_LOG_BLOCK_DIVERGENCE,
+  FM_LOG_BLOCK_UNKNOWN
+};
+
+// Runtime copy passed from the loop-task FM controller to the logger task. This is deliberately
+// separate from the packed on-flash struct; RTMState.ino publishes it under a tiny critical section.
+struct FmLogDiagSnapshot {
+  uint32_t gate_flags;
+  uint16_t distance_dx10;
+  uint16_t d_engage_dx10;
+  uint16_t rider_speed_dx10;
+  uint16_t sep_dwell_ms;
+  int16_t  front_angle_dx10;
+  uint8_t  mode;
+  uint8_t  state;
+  uint8_t  block_reason;
+  uint8_t  throttle_cap;
+};
 
 // ============================================================
 // V2.5-Evo - 2026-07-25 - STAGE 0 PART B: SELF-DESCRIBING LOG FILE HEADER
@@ -1037,17 +1122,68 @@ static inline uint16_t logRecordSizeForLevel(uint8_t level)
 // and add the argument in logFormatCsvRow(). Both readers pick it up with no further edits.
 // ============================================================
 #define LOG_CSV_HEADER_L3 "timestamp_ms,motor_current_A,battery_current_A,duty_cycle_%,voltage_V,ERPM,temp_mos_C,fault_code,speed_kmh,latitude,longitude,datetime_unix,thr_received,rtm_source,rtm_confidence,rtm_rx_active,gps_phase_b_ok,rtm_steer_override,rtm_heading_chosen_dx10,compass_live_dx10,compass_snap_dx10,snap_age_s,gps_course_dx10,cog_age_ms_div10,heading_error_dx10,d_error_dx10,remote_error,effective_steer,tx_distance_m,rssi_dbm,snr_db"
-#define LOG_CSV_HEADER_L4 LOG_CSV_HEADER_L3 ",gps_sent_per_s,cog_frozen_s,mux_err_cnt,loop_max_ms"
+#define LOG_CSV_HEADER_L4_LEGACY LOG_CSV_HEADER_L3 ",gps_sent_per_s,cog_frozen_s,mux_err_cnt,loop_max_ms"
+#define LOG_CSV_HEADER_L4 LOG_CSV_HEADER_L4_LEGACY ",fm_mode,fm_state,fm_block_reason,fm_throttle_cap,fm_distance_m,fm_d_engage_m,fm_rider_speed_kmh,fm_sep_dwell_ms,fm_front_angle_deg,fm_mode_ok,fm_trigger_held,fm_gps_not_rejected,fm_phase_b_ok,fm_tx_gps_fresh,fm_rx_gps_fresh,fm_heading_ok,fm_link_ok,fm_position_ok,fm_dist_over_d_engage,fm_sep_latched,fm_return_candidate,fm_min_dist_stop,fm_heading_disagree,fm_geometry_warning,fm_front_warning,fm_can_be_active,fm_return_exit_hold,fm_manual_steer,fm_divergence_fault"
 
 #define LOG_CSV_ROW_FMT_L3 "%u,%.2f,%.2f,%d,%.1f,%d,%u,%u,%.1f,%.6f,%.6f,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%d,%d,%u,%u,%.1f,%d,%.1f"
 #define LOG_CSV_ROW_EXT_L4 ",%u,%u,%u,%u"
+#define LOG_CSV_ROW_EXT_FM ",%u,%s,%s,%u,%.1f,%.1f,%.1f,%u,%.1f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u"
 
-// Row buffer size. Sizing arithmetic for the 31 level-3 columns is unchanged from F-WEBCSV:
-//   ~178 field chars + 30 commas + newline + NUL = ~210 bytes for normal data, and a corrupt
-//   latitude/longitude printed via "%.6f" can reach ~282. The 4 level-4 columns add at most
-//   3+3+5+5 chars plus 4 commas = 20. 640 clears the pathological case by ~2.1x. It is a stack
-//   local in the Arduino loop task (8 KB stack), which is where both readers run.
+// Row buffer size. The 31 level-3 columns need ~210 bytes normally and ~282 in the pathological
+// corrupt-coordinate case. The four legacy Deep fields plus 29 FM audit fields remain comfortably
+// below 640 bytes even with the longest state/block labels. It is a stack local in the Arduino loop
+// task (8 KB stack), which is where both readers run.
 #define LOG_CSV_ROW_BUF 640
+
+static inline const char* fmLogStateText(uint8_t state)
+{
+  switch (state) {
+    case 0: return "IDLE";
+    case 1: return "ARMED";
+    case 2: return "ACTIVE";
+    case 4: return "STOPPING";
+    case 5: return "RETURN";
+    default: return "UNKNOWN";
+  }
+}
+
+static inline const char* fmLogBlockReasonText(uint8_t reason)
+{
+  switch ((FmLogBlockReason)reason) {
+    case FM_LOG_BLOCK_NONE:              return "none";
+    case FM_LOG_BLOCK_NO_DECLARATION:    return "no_declaration";
+    case FM_LOG_BLOCK_CONFIG_DISABLED:   return "config_disabled";
+    case FM_LOG_BLOCK_MODE_EXPIRED:      return "mode_expired";
+    case FM_LOG_BLOCK_STOPPING:          return "stopping";
+    case FM_LOG_BLOCK_RETURN_EXIT_HOLD:  return "return_exit_hold";
+    case FM_LOG_BLOCK_GPS_REJECTED:      return "gps_rejected";
+    case FM_LOG_BLOCK_PHASE_B:           return "phase_b";
+    case FM_LOG_BLOCK_TX_GPS_STALE:      return "tx_gps_stale";
+    case FM_LOG_BLOCK_RX_GPS_STALE:      return "rx_gps_stale";
+    case FM_LOG_BLOCK_NO_HEADING:        return "no_heading";
+    case FM_LOG_BLOCK_LINK:              return "link";
+    case FM_LOG_BLOCK_POSITION:          return "position";
+    case FM_LOG_BLOCK_TRIGGER:           return "trigger";
+    case FM_LOG_BLOCK_BELOW_D_ENGAGE:    return "below_d_engage";
+    case FM_LOG_BLOCK_SEPARATION_DWELL:  return "separation_dwell";
+    case FM_LOG_BLOCK_RETURN_CANDIDATE:  return "return_candidate";
+    case FM_LOG_BLOCK_RETURN_ACTIVE:     return "return_active";
+    case FM_LOG_BLOCK_MIN_DIST_STOP:     return "min_dist_stop";
+    case FM_LOG_BLOCK_HEADING_DISAGREE:  return "heading_disagree";
+    case FM_LOG_BLOCK_DIVERGENCE:        return "divergence";
+    default:                             return "unknown";
+  }
+}
+
+static inline const char* logCsvHeaderForRecord(uint8_t level, uint16_t record_size)
+{
+  if (level < 4 || record_size < (uint16_t)LOG_RECORD_SIZE_L4_LEGACY) {
+    return LOG_CSV_HEADER_L3;
+  }
+  return (record_size >= (uint16_t)sizeof(VescLogDataL4))
+      ? LOG_CSV_HEADER_L4
+      : LOG_CSV_HEADER_L4_LEGACY;
+}
 
 // ============================================================
 // logFormatCsvRow - format ONE binary log record as one CSV line
@@ -1055,7 +1191,8 @@ static inline uint16_t logRecordSizeForLevel(uint8_t level)
 // What it does:
 //   Decodes rec_bytes (raw bytes straight off SPIFFS) into the level-3 fields, formats them,
 //   and — when the file is level 4 and the record is big enough to contain it — appends the
-//   4-column level-4 diagnostic block. Always terminates the line with a single '\n' and a NUL.
+//   level-4 diagnostics present in that record version. Always terminates the line with a single
+//   '\n' and a NUL.
 //
 // Inputs:
 //   out       - destination buffer (use LOG_CSV_ROW_BUF bytes)
@@ -1118,12 +1255,15 @@ static int logFormatCsvRow(char* out, size_t out_len, const uint8_t* rec_bytes, 
   if (n < 0) { out[0] = '\0'; return 0; }
   if ((size_t)n >= out_len) n = (int)out_len - 1;   // snprintf truncated — keep the index inside the buffer
 
-  // Level-4 block. Guarded on the RECORD SIZE as well as the level so a truncated or
-  // mislabelled file can never make us read past the bytes we actually have.
-  if (level >= 4 && rec_size >= (uint16_t)sizeof(VescLogDataL4) && (size_t)n < (out_len - 1))
+  // Level-4 blocks. The original four fields occupy bytes 59..64 and are decoded from every
+  // legacy-or-new L4 record. The FM extension begins at byte 65 and is appended only when the file
+  // actually contains it. This preserves exact header/row parity for old 65-byte files.
+  if (level >= 4 && rec_size >= (uint16_t)LOG_RECORD_SIZE_L4_LEGACY && (size_t)n < (out_len - 1))
   {
-    VescLogDataL4 d4;
-    memcpy(&d4, rec_bytes, sizeof(VescLogDataL4));
+    VescLogDataL4 d4 = {};
+    uint16_t copy_size = (rec_size < (uint16_t)sizeof(VescLogDataL4))
+        ? rec_size : (uint16_t)sizeof(VescLogDataL4);
+    memcpy(&d4, rec_bytes, copy_size);
     int m = snprintf(out + n, out_len - (size_t)n, LOG_CSV_ROW_EXT_L4,
                      (unsigned)d4.gps_sent_per_s,
                      (unsigned)d4.cog_frozen_s,
@@ -1133,6 +1273,46 @@ static int logFormatCsvRow(char* out, size_t out_len, const uint8_t* rec_bytes, 
     {
       n += m;
       if ((size_t)n >= out_len) n = (int)out_len - 1;
+    }
+
+    if (rec_size >= (uint16_t)sizeof(VescLogDataL4) && (size_t)n < (out_len - 1))
+    {
+      uint32_t g = d4.fm_gate_flags;
+      int m2 = snprintf(out + n, out_len - (size_t)n, LOG_CSV_ROW_EXT_FM,
+                        (unsigned)d4.fm_mode,
+                        fmLogStateText(d4.fm_state),
+                        fmLogBlockReasonText(d4.fm_block_reason),
+                        (unsigned)d4.fm_throttle_cap,
+                        (d4.fm_distance_dx10 == 0xFFFF) ? -1.0f : (d4.fm_distance_dx10 / 10.0f),
+                        (d4.fm_d_engage_dx10 == 0xFFFF) ? -1.0f : (d4.fm_d_engage_dx10 / 10.0f),
+                        (d4.fm_rider_speed_dx10 == 0xFFFF) ? -1.0f : (d4.fm_rider_speed_dx10 / 10.0f),
+                        (unsigned)d4.fm_sep_dwell_ms,
+                        (d4.fm_front_angle_dx10 == 0x7FFF) ? -1.0f : (d4.fm_front_angle_dx10 / 10.0f),
+                        (unsigned)((g & FM_LOG_GATE_MODE_OK) != 0),
+                        (unsigned)((g & FM_LOG_GATE_TRIGGER_HELD) != 0),
+                        (unsigned)((g & FM_LOG_GATE_GPS_NOT_REJECTED) != 0),
+                        (unsigned)((g & FM_LOG_GATE_PHASE_B_OK) != 0),
+                        (unsigned)((g & FM_LOG_GATE_TX_GPS_FRESH) != 0),
+                        (unsigned)((g & FM_LOG_GATE_RX_GPS_FRESH) != 0),
+                        (unsigned)((g & FM_LOG_GATE_HEADING_OK) != 0),
+                        (unsigned)((g & FM_LOG_GATE_LINK_OK) != 0),
+                        (unsigned)((g & FM_LOG_GATE_POSITION_OK) != 0),
+                        (unsigned)((g & FM_LOG_GATE_DIST_OVER_ENGAGE) != 0),
+                        (unsigned)((g & FM_LOG_GATE_SEP_LATCHED) != 0),
+                        (unsigned)((g & FM_LOG_GATE_RETURN_CANDIDATE) != 0),
+                        (unsigned)((g & FM_LOG_GATE_MIN_DIST_STOP) != 0),
+                        (unsigned)((g & FM_LOG_GATE_HEADING_DISAGREE) != 0),
+                        (unsigned)((g & FM_LOG_GATE_GEOMETRY_WARNING) != 0),
+                        (unsigned)((g & FM_LOG_GATE_FRONT_WARNING) != 0),
+                        (unsigned)((g & FM_LOG_GATE_CAN_BE_ACTIVE) != 0),
+                        (unsigned)((g & FM_LOG_GATE_RETURN_EXIT_HOLD) != 0),
+                        (unsigned)((g & FM_LOG_GATE_MANUAL_STEER) != 0),
+                        (unsigned)((g & FM_LOG_GATE_DIVERGENCE_FAULT) != 0));
+      if (m2 > 0)
+      {
+        n += m2;
+        if ((size_t)n >= out_len) n = (int)out_len - 1;
+      }
     }
   }
 

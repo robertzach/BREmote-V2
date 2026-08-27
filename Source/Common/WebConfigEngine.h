@@ -646,8 +646,8 @@ static void webCfgHandleDownloadLog()
   // ============================================================
   // V2.5-Evo - 2026-07-25 - STAGE 0 PART B: read the self-describing file header FIRST.
   //
-  // Records are no longer a fixed size — a level-4 file writes 65-byte records where a level-3
-  // file writes 59 — so the reader must take the size from the FILE rather than assume
+  // Records are no longer a fixed size — current level-4 files write 83-byte records (legacy Deep
+  // files use 65) where a level-3 file writes 59 — so the reader must take the size from the FILE
   // sizeof(VescLogData). This runs BEFORE the chunked 200 response is opened, so an unreadable
   // file can still be answered with a proper JSON error instead of a half-sent CSV body.
   //
@@ -688,7 +688,7 @@ static void webCfgHandleDownloadLog()
   // because Serial.println() supplies its own line ending.
   // The header emitted matches the level the file was RECORDED at (from its own header), not the
   // level the config happens to be set to now.
-  String header = String((hdr.log_level >= 4) ? LOG_CSV_HEADER_L4 : LOG_CSV_HEADER_L3) + "\n";
+  String header = String(logCsvHeaderForRecord(hdr.log_level, hdr.record_size)) + "\n";
   webCfgServer.sendContent(header);
 
   // V2.5-Evo - 2026-07-25 - STAGE 0: raw record buffer, sized for the largest record this
@@ -696,8 +696,8 @@ static void webCfgHandleDownloadLog()
   uint8_t rec_buf[sizeof(VescLogDataL4)];
   // V2.5-Evo - 2026-07-25 - F-WEBCSV: row buffer resized 400 -> 512 for the 31-column CSV.
   // V2.5-Evo - 2026-07-25 - STAGE 0: the buffer size and the sizing arithmetic behind it now live
-  // once, as LOG_CSV_ROW_BUF in BREmote_V2_Rx.h (640 B: the ~282 B pathological level-3 row plus
-  // the ~20 B level-4 block, with margin). It is a stack local in the Arduino loop task (8 KB).
+  // once, as LOG_CSV_ROW_BUF in BREmote_V2_Rx.h (640 B, including the FM audit CSV expansion with
+  // margin). It is a stack local in the Arduino loop task (8 KB).
   char row[LOG_CSV_ROW_BUF];
   uint16_t recordCount = 0;
   while (file.available())

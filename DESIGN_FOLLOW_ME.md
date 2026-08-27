@@ -79,7 +79,9 @@ periodic warning but does not alter steering, throttle cap, lifecycle state or s
 3. Phase B pass (TX↔RX cross-validation current).
 4. TX GPS age < `tx_gps_stale_timeout_ms`.
 5. RX GPS age < 6000 ms.
-6. Valid heading source (per heading ladder; `rtm_compass_required` honored).
+6. Valid heading source from the guarded ladder. A proven compass-vs-COG disagreement withdraws
+   the compass but is not itself an engagement gate: live GPS COG or the short held-COG bridge is
+   sufficient. If that GPS heading is absent, stale or frozen, the condition still fails.
 7. LoRa healthy: `millis() − last_packet < failsafe_time`.
 8. Radial separation proven: `dist > effective D_engage` continuously for 2 s. This is identical for F1–F4; angles and signed front lead are not activation gates.
 9. `dist > min_dist_m`, unless the min-distance stop has already latched. Crossing `min_dist_m` latches cap 0 until trigger release.

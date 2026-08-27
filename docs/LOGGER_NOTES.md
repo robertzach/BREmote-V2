@@ -1,6 +1,6 @@
 # RX On-Board VESC Logger — Notes
 
-_V2.5-Evo — last updated 2026-07-14_
+_V2.5-Evo — last updated 2026-08-27_
 
 The RX logs binary VESC + RTM telemetry records to on-board SPIFFS for post-ride analysis
 (propeller comparison, max-speed runs, RTM/steering tuning). This note covers the log rate
@@ -36,18 +36,26 @@ The change applies immediately and lasts until reboot (then back to the 3 Hz def
 
 ## Capacity — record size and duration
 
-- **Record size = 52 bytes** (`sizeof(VescLogData)`; `static_assert` in `BREmote_V2_Rx.h`).
+- **Developer record = 59 bytes. Deep record = 83 bytes.** Deep appends GPS/loop diagnostics and
+  the Follow-Me engage-audit snapshot. Old 65-byte Deep records remain readable because every file
+  stores its own record size in the BRLG header.
 - **SPIFFS partition = 1.875 MB** (`0x1E0000`) on the custom no-OTA 4 MB partition table
   (`Source/V2_Integration_Rx/partitions.csv`: 2.0 MB app + 1.875 MB SPIFFS).
 - Durations below are continuous single-file logging on a freshly formatted SPIFFS, accounting for
   normal filesystem overhead:
 
-| Rate | Bytes/hour | Approx. continuous logging on 1.875 MB SPIFFS |
-|---|---|---|
-| 5 Hz | ~936 KB/hr | ~1.9 hr |
-| **3 Hz (default)** | ~562 KB/hr | **~3.2 hr** |
-| 2 Hz | ~374 KB/hr | ~4.8 hr |
-| 1 Hz | ~187 KB/hr | ~9.6 hr |
+Approximate Deep-log capacity after the logger's 500 KB free-space reserve:
+
+| Rate | Deep bytes/hour | Approx. continuous Deep logging |
+|---|---:|---:|
+| 5 Hz | ~1.49 MB/hr | ~1.0 hr |
+| **3 Hz (default)** | ~0.90 MB/hr | **~1.6 hr** |
+| 2 Hz | ~0.60 MB/hr | ~2.4 hr |
+| 1 Hz | ~0.30 MB/hr | ~4.8 hr |
+
+For an engage investigation use `?set log_level 4`, save the configuration, and start a new log
+file. The appended `fm_block_reason` column gives the primary reason directly; the adjacent gate
+columns preserve the complete decision for cross-checking.
 
 - **Resilience:** each session is its own file, and `ensureFreeSpace()` rolls off the **oldest** log
   when SPIFFS fills while protecting the active file — so a full session always fits; only old
