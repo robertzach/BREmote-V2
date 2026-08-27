@@ -1,6 +1,7 @@
 // V2.5-Evo - 2026-08-27 - Deep logs append a 13-byte heading-evidence audit after the existing 83-byte FM audit record: configured heading mode, compass-vs-COG difference, set/clear dwell progress, last-good-COG and compass-snapshot ages, plus twelve raw validity/evidence flags. The BRLG record_size keeps 65-byte and 83-byte Deep files readable with their matching historical CSV headers. Instrumentation only; no control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering without a config reset: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct and rsvd_u16_1 renamed in place to steer_reduction_start_pct. Defaults 35%/50%; cfgValidateCrossField() migrates legacy values before validation. PWM applies the smoothstep curve after manual/FM arbitration using effective throttle, so manual riding and automatic FM share the same rollover protection. Types, offsets, sizeof(confStruct)==192 and SW_VERSION 35 are unchanged.
 // V2.5-Evo - 2026-08-27 - fm_diverge_dist_m claims the banked rsvd_f32_1 slot in place as an absolute-metre setting. The effective limit is clamped to [2 x effective D_engage, 100 m]. Same final float, same offset and sizeof(confStruct)==192, so SW_VERSION remains 35 and stored RX configuration is not reset. Existing boards contain 0 in this formerly unused slot; 0 derives the previous 6 x D_engage limit and applies the new 100 m maximum. New/default configs store 100 m explicitly. No packet or struct-layout change.
+// V2.5-Evo - 2026-08-28 - rtm_target_speed_kmh is now the literal 0-50 km/h FM_RETURN PI-governor setpoint: 0 means zero speed, with no default substitution and no 8 km/h hard cap. kFmReturnTargetSpeedMaxKmh is shared by config validation and the defensive control-path clamp. No field/layout/default/version change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - Added shared compile-time kFmManualSteerDeadband=40 for FM manual-steering arbitration in both PWM.ino and RTMState.ino. No confStruct field/size/version change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - COMMENT-ONLY size correction (no code, no struct, no SW_VERSION change): the mag_orientation block claimed "sizeof 184 -> 188". The finished struct is 192 — mag_orientation (2) plus the two reserved slots rsvd_u16_1 (2) and rsvd_f32_1 (4) that landed in the same SW34->35 edit, naturally aligned with no tail pad. The static_assert has always said 192; only the prose was wrong. Corrected in three places: the mag_orientation block, the "confStruct is 184 bytes" line in the log_level block (retensed as history), and the static_assert's own trailing history, which never recorded the 184->192 step and now does. Flagged as load-bearing rather than cosmetic because the SW34->35 config-backup migration is pinned to the exact counts 184 (legacy) and 192 (current) and disables itself if either stops matching. Every remaining "184" in this file sits inside a dated change-history entry and is correct AS HISTORY — the static_assert is the SSOT for the current size.
 // V2.5-Evo - 2026-08-17 - defaultConf.vesc_timeout_s raised 6 -> 10 s, because a VESC cold restart takes roughly 8-9 seconds and 6 s is shorter than that: every restart blanked the rider's battery % and FET temperature to "N/A" on the TX while the VESC was merely booting. 10 s covers the restart and is still half the original hardcoded 20 s. VALUE-ONLY change to an existing field: no field added, moved, renamed or resized, and the 5-60 s validation range in ConfigService is untouched — so sizeof(confStruct) stays 192, the static_assert is unchanged, SW_VERSION stays 35 and the owner's SPIFFS config is NOT wiped by this flash. Because it is NOT wiped, a board with a stored vesc_timeout_s keeps its old value: it must be set on the device with `?set vesc_timeout_s 10` + `?save`. Second consumer checked — RTM Phase C check 2 uses the same field to decide when to SKIP its VESC-ERPM-vs-GPS-speed comparison; a longer timeout means fewer skips, and since a skipped check and a passed check have the identical outcome (no stop) the check's coverage can only widen, never shrink.
@@ -358,13 +359,12 @@ struct confStruct {
     //   At near-zero throttle, motor current is minimal — compass bias is also reduced,
     //   so hybrid heading mode has cleaner compass snapshot data during alignment.
     //
-    // Phase 2 (Run): once aligned, throttle is governed by GPS speed so behaviour is
-    //   consistent across different boogies regardless of motor/prop curve.
-    //   rtm_target_speed_kmh == 0 disables the governor (approach decel zone only).
+    // Phase 2 (Run): once aligned, FM_RETURN uses the shared stateful GPS-speed PI governor.
+    //   rtm_target_speed_kmh is its literal 0-50 km/h target; zero commands cap 0.
     //
     // sizeof grows 164 → 172. SW_VERSION 31 → 32. First flash resets SPIFFS config.
     // ============================================================
-    float    rtm_target_speed_kmh;      // FM_RETURN speed; 0=>5 km/h fallback; hard cap 8; default 4
+    float    rtm_target_speed_kmh;      // FM_RETURN PI target; literal 0-50 km/h; default 4
     uint16_t rtm_align_threshold_deg;   // FM_RETURN align threshold; 10-90°; default 45
 
     // V2.5-Evo - 2026-06-05 - SW33: MOTOR RAMPING (seconds). Time for a motor output to rise
@@ -543,7 +543,7 @@ confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: convent
   1,          // rtm_use_compass: 1 = Hybrid (GPS COG primary, compass snapshot at low speed). 0=COG only, 2=compass only DIAGNOSTIC.
   3,          // rtm_cog_min_speed_kmh: GPS speed threshold below which compass snapshot is used; 1-15 km/h; default 3
   // V2.5-Evo - 2026-05-22 - SW32: Two-phase RTM throttle defaults
-  4.0f,       // rtm_target_speed_kmh: Phase 2 GPS speed cap; 4 km/h default; 0=disabled
+  4.0f,       // rtm_target_speed_kmh: FM_RETURN PI target; literal 0-50 km/h; default 4
   45,         // rtm_align_threshold_deg: heading error threshold for Phase 1→2 transition; 45° default
   // V2.5-Evo - 2026-06-05 - SW33: motor ramping (secs) default
   0.75f,      // motor_ramp_s: motors ramp 0->full over 0.75s (0=instant/off, 0-4s); also ramps steering
@@ -626,6 +626,11 @@ static inline float fmMinimumDivergeDistanceFromConfig(const confStruct &conf)
 // latch and throttle cap stay active throughout. This lives in the header because PWM.ino is
 // compiled before RTMState.ino and both control paths must use the same threshold.
 static const uint8_t kFmManualSteerDeadband = 40;   // counts from steering centre 127
+
+// FM_RETURN target-speed range. The setting itself already exists as a float in confStruct, so
+// widening its accepted values changes neither layout nor SW_VERSION. Zero is a real zero-speed
+// target; a non-zero boogie_vmax_in_followme_kmh may still clamp it further at runtime.
+static const float kFmReturnTargetSpeedMaxKmh = 50.0f;
 
 // ============================================================
 // V2.5-Evo - 2026-07-25 - STAGE 2: HEADING-SOURCE TRUST CONSTANTS (RTM + FM)

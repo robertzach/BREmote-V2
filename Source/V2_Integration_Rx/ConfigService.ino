@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - rtm_target_speed_kmh validation widened from 0-8 to 0-50 km/h. It is now the literal FM_RETURN PI-governor target; zero means zero speed rather than a fallback. Metadata only; confStruct and SW_VERSION stay unchanged.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering config without a version bump: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct (20-100%, default 35), and rsvd_u16_1 renamed in place to steer_reduction_start_pct (30-80%, default 50). cfgValidateCrossField() recognises legacy/invalid values and promotes them before field validation. Offsets/types/sizeof stay unchanged at 192 bytes; SW_VERSION remains 35.
 // V2.5-Evo - 2026-08-27 - rsvd_f32_1 renamed in place to fm_diverge_dist_m. Explicit values are absolute metres, raised to at least 2 x effective D_engage and capped at 100 m. 0 preserves existing SW35 configs by deriving the old 6 x D_engage limit before applying the 100 m cap. Same float/offset/sizeof, SW_VERSION stays 35 and no config wipe occurs.
 // V2.5-Evo - 2026-08-27 - Follow-Me validation extended 0-4 -> 0-6 for F4 Front-Left, F5 Front and F6 Front-Right. Range only; no confStruct/SW_VERSION change.
@@ -94,9 +95,9 @@ const CfgFieldSpec kCfgFields[] = {
   // but were never added here — orphaning them exactly like the mag_* fields were (see the SW44 note below):
   // /api/config never returned them and cfgSetValueByKey() rejected them as unknown keys, so the RTM Phase-2
   // speed governor and the Phase 1→2 align threshold were stuck at their defaultConf values. METADATA ROWS
-  // ONLY — no struct change, no size change (stays 184), no SW_VERSION bump. Ranges mirror WebUiEmbedded:
-  // Historical key, now FM Return target speed. 0 uses the safe default; return is capped at 8 km/h.
-  {"rtm_target_speed_kmh",     CFG_FLOAT, offsetof(confStruct, rtm_target_speed_kmh),     true, false, true,  0.0f,   8.0f,  1, false},
+  // ONLY — no struct change, no size change (stays 192), no SW_VERSION bump. Ranges mirror WebUiEmbedded:
+  // Historical key, now the literal 0-50 km/h FM_RETURN PI target. Zero commands zero speed.
+  {"rtm_target_speed_kmh",     CFG_FLOAT, offsetof(confStruct, rtm_target_speed_kmh),     true, false, true,  0.0f, kFmReturnTargetSpeedMaxKmh, 1, false},
   {"rtm_align_threshold_deg",  CFG_U16,   offsetof(confStruct, rtm_align_threshold_deg),  true, false, true, 10.0f,  90.0f,  0, false},
   {"logger_en", CFG_U16, offsetof(confStruct, logger_en), true, false, true, 0.0f, 1.0f, 0, false},
   {"paired", CFG_U16, offsetof(confStruct, paired), true, false, true, 0.0f, 1.0f, 0, false},

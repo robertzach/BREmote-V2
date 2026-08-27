@@ -502,7 +502,9 @@ If the trigger is still held, cap 0 remains until it is released once; otherwise
 available immediately. Sustained rider motion also cancels return to `FM_ARMED`, never directly to
 `FM_ACTIVE`. The TX shows `rE` only while return is active. The historical RX config keys
 `rtm_target_speed_kmh`, `rtm_align_threshold_deg`, and `rtm_approach_zone_m` tune the return
-controller; their names are retained only for stored-config compatibility.
+controller; their names are retained only for stored-config compatibility. RETURN uses the same
+stateful PI speed governor as F1-F6. `rtm_target_speed_kmh` is its literal 0-50 km/h setpoint
+(`0` means zero speed); a non-zero `boogie_vmax_in_followme_kmh` remains an absolute ceiling.
 
 ---
 

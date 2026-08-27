@@ -338,7 +338,7 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | `gps_dyn_model` | **0 (Sea)** — unless your water is above ~500 m altitude, then **4 (Automotive)** | The Sea navigation model has a 500 m ceiling and good fixes start being rejected above it. Sea is the better model below that, so leave it at 0 |
 | `rtm_compass_required` | 1 | Require a valid heading source for FM_RETURN (historical key name) |
 | `rtm_use_compass` | 1 (Hybrid) — never 2 on water | Mode 2 (compass-only) is bench-diagnostic only (motor EMI biases compass 100°+) |
-| `rtm_target_speed_kmh` | 5 km/h or lower | FM_RETURN target; 0 also means 5 km/h and firmware hard-limits it to 8 km/h |
+| `rtm_target_speed_kmh` | Start at 5 km/h or lower | Literal 0-50 km/h FM_RETURN PI target; 0 means zero speed; non-zero Boogie V-Max may clamp it |
 | `rtm_approach_zone_m` | 12 m | FM_RETURN slowdown-band width outside effective `fm_engage_dist_m` |
 
 > **Follow-Me mode mapping.** The same on every surface — firmware, both on-device portals, and the

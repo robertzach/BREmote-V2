@@ -193,8 +193,9 @@ than the effective `fm_engage_dist_m`, the state changes from `FM_ARMED` or `FM_
   `FM_ACTIVE` or disarms to `FM_IDLE`.
 - If the trigger is held when either normal exit occurs, cap 0 remains until you release it once;
   otherwise manual cap 255 is restored immediately.
-- Return drive is limited by `rtm_target_speed_kmh` (historical config key; 0 means 5 km/h,
-  absolute firmware limit 8 km/h) and slows across `rtm_approach_zone_m`.
+- Return drive uses the same stateful PI speed governor as F1-F6. `rtm_target_speed_kmh` is its
+  literal 0-50 km/h target (`0` means zero speed); a non-zero `boogie_vmax_in_followme_kmh`
+  remains an absolute ceiling. It slows across `rtm_approach_zone_m`.
 
 The stop alarm (`St` + one long buzz) fires **only when it would surprise you** — i.e. a
 fault while you're holding the trigger. A stop after you've already let go just goes quiet.
@@ -238,7 +239,7 @@ fault while you're holding the trigger. A stop after you've already let go just 
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
 | `fm_engage_dist_m` | radial F1–F6 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
 | `fm_diverge_dist_m` | absolute upper FM_ACTIVE divergence-test distance | default/max 100 m; values below `2 × D_engage` are raised to that minimum; legacy 0 derives the old `6 × D_engage` value under the 100 m cap; fault still needs 3 s without more than 2 m closure |
-| `rtm_target_speed_kmh` | FM_RETURN speed target (historical key) | 0 = 5 km/h; hard maximum 8 km/h |
+| `rtm_target_speed_kmh` | FM_RETURN PI speed target (historical key) | literal 0-50 km/h; 0 = zero speed; non-zero Boogie V-Max may clamp it |
 | `rtm_approach_zone_m` | FM_RETURN slowdown-band width outside the arrival radius (historical key) | minimum effective width 2 m |
 
 > **Tuning note:** the follow distance is currently set generous (`min_dist_m` + band

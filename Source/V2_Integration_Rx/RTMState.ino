@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - FM_RETURN now uses the same stateful PI speed governor as F1-F6 instead of the old stateless (1-speed/target) cap. rtm_target_speed_kmh is the literal 0-50 km/h RETURN setpoint (0 means cap 0); the old 5 km/h fallback and 8 km/h hard limit are removed, while a configured non-zero boogie V-Max remains the final absolute safety ceiling. PI state is cold-started on RETURN entry, pause and exit, and approach/align/engage caps feed the existing anti-windup path. Steering D continuity now includes a target-geometry profile as well as the heading source, so course-valid/degraded, diagonal, front-station and direct-return target changes cannot create a derivative kick. Config layout and SW_VERSION stay unchanged.
 // V2.5-Evo - 2026-08-28 - FM catch-up now uses the configured boogie V-Max in every F1-F6 mode until the corresponding distance-control band is reached. F1-F3 use the radial min_dist+smoothing-band edge; F4-F6 use the signed positive along-track error and require valid front geometry, so a buggy already too far ahead is never accelerated away. A 2 m Schmitt margin prevents GPS noise from repeatedly reopening catch-up. With boogie_vmax_in_followme_kmh=0 only the catch-up-phase speed cap is opened to 255 (maximum rider-requested throttle); normal in-band rider-relative PI regulation remains active. Align, engage, approach, hard-stop, divergence and trigger-deadman caps are unchanged. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-27 - The coherent Level-4 FM snapshot now includes the raw heading-evidence chain: configured ladder mode, live/held COG subconditions, snapshot freshness, compass-vs-COG comparison/difference, latch state and set/clear dwell progress. It is computed read-only at the end of the existing 10 Hz FM tick and lets a log explain why condition 6 passed without altering heading selection. No control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - A proven compass-vs-COG disagreement no longer blocks or aborts Follow-Me. The disagreement still latches and withdraws the compass, but live GPS COG and the short held-COG bridge remain valid FM heading sources. Per-tick disagreement no longer vetoes that valid COG. FM still requires an actual heading: no/stale/frozen COG while the compass is withdrawn remains a condition-6 failure. Telemetry and serial diagnostics now report GPS-only degradation instead of "will not engage". No config/packet/SW_VERSION change.
@@ -104,6 +105,21 @@ static unsigned long prev_steering_update_ms   = 0;
 // AND on a compass-snapshot re-snap; prev_heading_src_valid gates the very first sample.
 static uint32_t      prev_heading_src_id       = 0;
 static bool          prev_heading_src_valid    = false;
+
+// The D term must also stay within one continuous TARGET geometry. A live COG can remain the same
+// heading source while the requested bearing jumps (for example F4-F6 loses rider course and changes
+// from a front station to straight-ahead degraded steering). Treating that as continuous produced the
+// measured -811 deg/s D kick. computeFmTarget() and the RETURN branch publish one of these profiles;
+// updateFmSteering() skips D whenever it differs from the previous sample.
+static const uint8_t kFmTargetProfileNone                 = 0x00;
+static const uint8_t kFmTargetProfileReturnDirect         = 0x01;
+static const uint8_t kFmTargetProfileTrailingBase         = 0x10; // + mode*2 + diagonal-bit
+static const uint8_t kFmTargetProfileFrontBase            = 0x30; // + F4-F6 mode
+static const uint8_t kFmTargetProfileFrontFallbackBase    = 0x40; // + F4-F6 mode
+static const uint8_t kFmTargetProfileDegradedBehind       = 0x50;
+static const uint8_t kFmTargetProfileDegradedFrontBase    = 0x60; // + F4-F6 mode
+static uint8_t       fm_target_profile                    = kFmTargetProfileNone;
+static uint8_t       prev_fm_target_profile               = kFmTargetProfileNone;
 
 // Non-static globals exported to Logger.ino via extern (Bundle 1 tuning telemetry).
 // 0x7FFF is the "no data" sentinel (non-zero).
@@ -1356,8 +1372,7 @@ static const uint32_t kFmReturnResumeDwellMs  = 1000;
 static const uint32_t kFmReturnMaxRuntimeMs   = 60000;
 static const uint32_t kFmReturnCheckMs        = 5000;
 static const float    kFmReturnCloseEpsM      = 0.5f;
-static const float    kFmReturnDefaultSpeedKmh = 5.0f;
-static const float    kFmReturnHardMaxSpeedKmh = 8.0f;
+static const uint8_t  kFmSpeedGovernorReturnProfile = 0xFE;
 
 // How long the RX keeps a TX-declared FM mode alive without a refresh.
 // The TX re-sends 0xF2/mode every 30 s while armed, so 95 s is ~3 missed keepalives.
@@ -1491,9 +1506,9 @@ static unsigned long fm_prev_filt_ms     = 0;
 static float         fm_rider_course_deg = -1.0f;  // 0-360 deg clockwise from North, or -1 = invalid
 static float         fm_rider_speed_kmh  = 0.0f;   // km/h
 
-// F1-F6 speed-governor memory. Updated only on a fresh accepted RX GPS-speed sample, so the 10 Hz
-// navigation loop cannot integrate the same measurement repeatedly. The integrator starts open at
-// 255; the independent engage ramp still provides the safe 0->full activation edge.
+// Shared F1-F6 / FM_RETURN speed-governor memory. Updated only on a fresh accepted RX GPS-speed
+// sample, so the 10 Hz navigation loop cannot integrate the same measurement repeatedly. The
+// integrator starts open at 255; the independent engage ramp still provides the safe 0->full edge.
 static bool          fm_speed_gov_init             = false;
 static uint8_t       fm_speed_gov_mode             = 0xFF;
 static unsigned long fm_speed_gov_last_gps_ms      = 0;
@@ -1854,7 +1869,8 @@ static void updateFmSteering()
   }
 
   float d_error;
-  if (prev_heading_src_valid && heading_src_id == prev_heading_src_id) {
+  if (prev_heading_src_valid && heading_src_id == prev_heading_src_id &&
+      fm_target_profile == prev_fm_target_profile) {
     // heading_error lives on a circle. Subtracting its normalized representations directly
     // creates a false +/-360 deg jump at the branch cut (for example +179 -> -179). Differentiate
     // the shortest signed angular delta instead, so that example is +2 deg rather than -358 deg.
@@ -1868,6 +1884,7 @@ static void updateFmSteering()
   float d_term = p.kd * d_error;
   prev_heading_error_deg = heading_error;
   prev_heading_src_id    = heading_src_id;
+  prev_fm_target_profile = fm_target_profile;
   prev_heading_src_valid = true;
 
   // Confidence: LOW conf reduces total authority by 50% (preserves D5 behavior)
@@ -2295,6 +2312,7 @@ static void computeFmTarget(double* out_lat, double* out_lng)
     // buggy going straight along its own trusted heading until the rider course returns. This does
     // not pretend to know where the selected front station is; the warning stays asserted.
     if (fmIsFrontMode(m)) {
+      fm_target_profile = kFmTargetProfileDegradedFrontBase + m;
       float buggy_heading = 0.0f;
       uint8_t heading_confidence = 0;
       if (getRtmHeading(&buggy_heading, &heading_confidence)) {
@@ -2307,6 +2325,7 @@ static void computeFmTarget(double* out_lat, double* out_lng)
       }
       return;
     }
+    fm_target_profile = kFmTargetProfileDegradedBehind;
     float b_rider_to_buggy = (float)TinyGPSPlus::courseTo(
         fm_filt_lat, fm_filt_lng, gps_last_lat, gps_last_lng);
     projectPoint(fm_filt_lat, fm_filt_lng, b_rider_to_buggy, d_follow, out_lat, out_lng);
@@ -2335,6 +2354,7 @@ static void computeFmTarget(double* out_lat, double* out_lng)
   // Station distance remains the existing min_dist + band radius; F4/F6 rotate that radius by the
   // existing near_diag_offset_deg while F5 is straight ahead.
   if (fmIsFrontMode(m)) {
+    fm_target_profile = kFmTargetProfileFrontBase + m;
     float lookahead_m = usrConf.followme_smoothing_band_m;
     float half_follow = 0.5f * d_follow;
     if (lookahead_m < half_follow) lookahead_m = half_follow;
@@ -2370,6 +2390,7 @@ static void computeFmTarget(double* out_lat, double* out_lng)
     } else {
       // Defensive finite-data fallback. Aim from the buggy itself, so even this exceptional tick
       // cannot manufacture a target behind it.
+      fm_target_profile = kFmTargetProfileFrontFallbackBase + m;
       projectPoint(gps_last_lat, gps_last_lng, course, lookahead_m, out_lat, out_lng);
       return;
     }
@@ -2401,6 +2422,10 @@ static void computeFmTarget(double* out_lat, double* out_lng)
     if (m == 1)      offset = -(float)usrConf.near_diag_offset_deg;   // mode 1 Near-Right
     else if (m == 3) offset = +(float)usrConf.near_diag_offset_deg;   // mode 3 Near-Left
   }
+
+  bool diagonal_target = fm_diagonal_engaged && (m == 1 || m == 3);
+  fm_target_profile = kFmTargetProfileTrailingBase + (m * 2u) +
+      (diagonal_target ? 1u : 0u);
 
   float target_bearing = course + 180.0f + offset;
   projectPoint(anchor_lat, anchor_lng, target_bearing, d_follow, out_lat, out_lng);
@@ -2594,30 +2619,32 @@ static float fmSpeedTargetKmh(float front_along_m, uint8_t mode, bool catchup_ac
   return target_kmh;
 }
 
-// Stateful PI speed limiter for F1-F6. It updates only when gps_last_ms changes. The integrator
+// Shared stateful PI speed limiter. It updates only when gps_last_ms changes. The integrator
 // learns the cap required at zero speed error instead of forcing cap 0 at the requested speed.
 // Anti-windup blocks positive integration while approach/align/engage is the tighter cap; negative
 // error may still remove stored cap. A separate 2 km/h overspeed band is the deterministic backstop.
-static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
-                                          bool catchup_active)
+// governor_profile keeps F1-F6 and FM_RETURN bumpless but prevents either phase from inheriting the
+// other's target-filter meaning.
+static uint16_t fmComputeSpeedGovernorCapForTarget(float raw_target_kmh,
+                                                   uint8_t governor_profile)
 {
-  float raw_target_kmh = fmSpeedTargetKmh(front_along_m, mode, catchup_active);
+  if (!isfinite(raw_target_kmh) || raw_target_kmh < 0.0f) raw_target_kmh = 0.0f;
   float raw_speed_kmh  = gps_last_speed_kmh;
   if (!isfinite(raw_speed_kmh) || raw_speed_kmh < 0.0f) raw_speed_kmh = 0.0f;
 
   if (!fm_speed_gov_init) {
     fm_speed_gov_init             = true;
-    fm_speed_gov_mode             = mode;
+    fm_speed_gov_mode             = governor_profile;
     fm_speed_gov_last_gps_ms      = gps_last_ms;
     fm_speed_filtered_kmh         = raw_speed_kmh;
     fm_speed_target_filtered_kmh  = raw_target_kmh;
     fm_speed_integrator           = 255.0f;
     fm_speed_cap_slewed           = 255.0f;
     fm_speed_other_cap_active     = false;
-  } else if (fm_speed_gov_mode != mode) {
-    // Bumpless mode transfer: the target filter moves to the new geometry immediately, while the
-    // learned cap starts from the value that was actually being exposed before the mode change.
-    fm_speed_gov_mode             = mode;
+  } else if (fm_speed_gov_mode != governor_profile) {
+    // Bumpless profile transfer: the target filter moves to the new meaning immediately, while the
+    // learned cap starts from the value that was actually being exposed before the profile change.
+    fm_speed_gov_mode             = governor_profile;
     fm_speed_target_filtered_kmh  = raw_target_kmh;
     fm_speed_integrator           = fm_speed_cap_slewed;
     fm_speed_other_cap_active     = false;
@@ -2679,6 +2706,15 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
   if (cap > 255.0f) cap = 255.0f;
   if (cap <   0.0f) cap =   0.0f;
   return (uint16_t)cap;
+}
+
+// F1-F6 target selection stays separate from the shared PI mechanics. FM_RETURN calls the same
+// core with its configured fixed target and its own profile id.
+static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
+                                          bool catchup_active)
+{
+  return fmComputeSpeedGovernorCapForTarget(
+      fmSpeedTargetKmh(front_along_m, mode, catchup_active), mode);
 }
 
 // ------------------------------------------------------------
@@ -2949,10 +2985,10 @@ static bool fmReturnFaultOk(unsigned long now)
   return true;
 }
 
-// Direct-return throttle law: same RTM two-phase shape (align, GPS-speed governor, approach
-// deceleration), but with effective D_engage as the arrival radius. The legacy RTM approach value
-// is interpreted here as a BAND WIDTH outside D_engage; this remains useful after the standalone
-// RTM mode is removed and avoids the unsafe 1 m decel band produced by absolute 12 m vs 11 m values.
+// Direct-return throttle law: the same stateful PI speed governor and cap arbitration used by
+// F1-F6, with rtm_target_speed_kmh as a fixed 0-50 km/h target. The legacy RTM approach value is
+// interpreted as a BAND WIDTH outside D_engage; approach, align and engage remain independent caps
+// and feed the shared governor's anti-windup state.
 static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned long now)
 {
   uint16_t cap = 255;
@@ -2969,21 +3005,18 @@ static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned
   }
 
   float target_kmh = usrConf.rtm_target_speed_kmh;
-  if (target_kmh <= 0.1f) target_kmh = kFmReturnDefaultSpeedKmh;
-  if (target_kmh > kFmReturnHardMaxSpeedKmh) target_kmh = kFmReturnHardMaxSpeedKmh;
-  if (usrConf.boogie_vmax_in_followme_kmh > 0.1f &&
-      target_kmh > usrConf.boogie_vmax_in_followme_kmh) {
-    target_kmh = usrConf.boogie_vmax_in_followme_kmh;
+  if (!isfinite(target_kmh) || target_kmh < 0.0f) target_kmh = 0.0f;
+  if (target_kmh > kFmReturnTargetSpeedMaxKmh) {
+    target_kmh = kFmReturnTargetSpeedMaxKmh;
   }
-  if (target_kmh <= 0.1f) {
-    cap = 0;
-  } else {
-    float speed_frac = gps_last_speed_kmh / target_kmh;
-    if (speed_frac < 0.0f) speed_frac = 0.0f;
-    if (speed_frac > 1.0f) speed_frac = 1.0f;
-    uint16_t c = (uint16_t)((1.0f - speed_frac) * 255.0f);
-    if (c < cap) cap = c;
+  float absolute_max_kmh = usrConf.boogie_vmax_in_followme_kmh;
+  if (isfinite(absolute_max_kmh) && absolute_max_kmh > 0.1f &&
+      target_kmh > absolute_max_kmh) {
+    target_kmh = absolute_max_kmh;
   }
+  uint16_t speed_cap = fmComputeSpeedGovernorCapForTarget(
+      target_kmh, kFmSpeedGovernorReturnProfile);
+  if (speed_cap < cap) cap = speed_cap;
 
   float abs_err = (g_heading_error_dx10 != 0x7FFF)
       ? fabsf((float)g_heading_error_dx10 / 10.0f)
@@ -2999,6 +3032,10 @@ static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned
       if (c < cap) cap = c;
     }
   }
+
+  // Freeze positive PI integration whenever approach, alignment or the engage ramp is tighter.
+  // Overspeed correction remains active because it can only remove throttle authority.
+  fm_speed_other_cap_active = (cap < speed_cap);
   return (uint8_t)cap;
 }
 
@@ -3016,6 +3053,7 @@ static void fmReturnFaultStop(unsigned long now, const char *reason, bool thr_he
   fm_fault_alarm_ms = now;
   fm_stop_ms = now;
   fm_state   = FM_STOPPING;
+  fmResetSpeedGovernor();
   Serial.printf("FM [RX] RETURN FAULT -> STOPPING: %s (thr_held=%d)\n", reason, (int)thr_held);
 }
 
@@ -3044,6 +3082,7 @@ static void fmExitReturnToArmed()
   fm_engage_ms                  = 0;
   fm_diverge_since_ms           = 0;
   fm_diverge_start_dist_m       = -1.0f;
+  fmResetSpeedGovernor();
 
   // Direct-return and normal Follow-Me use different targets. Never let either controller lifecycle
   // differentiate its next heading error against the final sample from the other one.
@@ -3324,6 +3363,7 @@ void runFmLoop()
       prev_steering_update_ms       = 0;
       g_heading_error_dx10          = 0x7FFF;
       g_d_error_dx10                = 0x7FFF;
+      fmResetSpeedGovernor();
       Serial.printf("FM [RX] ENTER RETURN: stationary %.1f km/h, dist=%.1f m > D_engage=%.1f m for %lu ms%s\n",
                     fm_rider_speed_kmh, dist_m, d_engage,
                     (unsigned long)kFmLatchResetDwellMs,
@@ -3391,12 +3431,14 @@ void runFmLoop()
       fm_return_check_ms    = 0;
       fm_return_prev_dist_m = -1.0f;
       fm_return_start_ms    = now;
+      fmResetSpeedGovernor();
       return;
     }
 
     fm_rx_active = true;
     fm_target_lat = fm_filt_init ? fm_filt_lat : rx_tx_gps_lat;
     fm_target_lng = fm_filt_init ? fm_filt_lng : rx_tx_gps_lng;
+    fm_target_profile = kFmTargetProfileReturnDirect;
     updateFmSteering();
     fm_throttle_cap = fmComputeReturnThrottleCap(dist_m, d_engage, now);
 

@@ -164,7 +164,7 @@ compatibility value reconstructs the old `6 × D_engage` limit and then applies 
 | `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4–F6 selected-axis warning Schmitt only | 35° / 45° |
 | `fm_engage_dist_m` | one radial F1–F6 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
 | `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |
-| `rtm_target_speed_kmh` | historical key: FM Return GPS speed target; 0 uses 5 km/h, hard-limited to 8 km/h | 4 km/h |
+| `rtm_target_speed_kmh` | historical key: literal 0-50 km/h FM Return PI target; 0 means zero speed; non-zero Boogie V-Max may clamp it | 4 km/h |
 | `rtm_align_threshold_deg` | historical key: FM Return align threshold | 45° |
 | `rtm_approach_zone_m` | historical key: FM Return slowdown-band width outside `D_engage`; minimum effective width 2 m | 12 m |
 
