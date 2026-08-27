@@ -724,8 +724,9 @@ void serPrintStatus(bool json)
 //
 // Returns false if the ADC is known-bad or does not answer in time. Callers must decide what
 // a missing reading MEANS — never treat it as a valid zero.
+// MUX_BY_CHANNEL occupies bits 14:12, and ADS1115 conversion results are signed 16-bit values.
 // ============================================================
-static bool adsReadGuarded(uint8_t muxChannel, uint16_t &out)
+static bool adsReadGuarded(uint16_t muxChannel, int16_t &out)
 {
   if (!g_ads_ok) return false;
 
@@ -754,7 +755,7 @@ void checkCharger()
 #ifdef WIFI_ENABLED
     webCfgLoop();
 #endif
-    uint16_t chgstat = 0;
+    int16_t chgstat = 0;
     if (!adsReadGuarded(MUX_BY_CHANNEL[P_CHGSTAT], chgstat))
     {
       // ============================================================
@@ -782,7 +783,7 @@ void checkCharger()
       break;
     }
 
-    uint16_t bat_volt = 0;
+    int16_t bat_volt = 0;
     if (!adsReadGuarded(MUX_BY_CHANNEL[P_UBAT_MEAS], bat_volt))
     {
       Serial.println("CHG: !! ADS1115 stopped answering mid-read — leaving charge screen, "
@@ -791,7 +792,9 @@ void checkCharger()
       exitChargeScreen = 1;
       break;
     }
-    uint16_t c_bat_volt = (uint16_t)((float)bat_volt * usrConf.ubat_cal * 100.0);
+    uint16_t c_bat_volt = bat_volt > 0
+                            ? (uint16_t)((float)bat_volt * usrConf.ubat_cal * 100.0)
+                            : 0;
 
 
     if(chgstat < 1000)
