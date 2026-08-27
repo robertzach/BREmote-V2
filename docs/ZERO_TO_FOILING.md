@@ -422,7 +422,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Holds vs Stops:** trigger release or a fall / slow-down / too-close is a **HOLD** — buggy pauses, stays armed and resumes when the gates recover. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Holds vs Stops:** a brief trigger release or a fall / slow-down / too-close is a **HOLD** — buggy pauses and stays armed. Keep the trigger released continuously for 2 s to return RX to manual ARMED; the next squeeze is manual and FM needs a fresh separation proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---
@@ -436,7 +436,7 @@ Preconditions to *engage* (you can arm before these are perfect; it won't engage
    - Two ways to separate: whip yourself past the buggy, or keep throttle and steer the buggy to its offset side so it peels off while you carry into the wave.
 3. **Following:** the buggy trails at your set side/distance, steering itself. You keep the throttle held; the buggy only ever moves on **your** throttle and only *subtracts* from it.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
-4. **Fall / slow / too close →** it HOLDs (stays armed). **Let go of the trigger →** instant stop without disarming FM. If fresh positions then show you inside the effective engagement distance and below 2 km/h for 2 seconds, the separation proof is cleared and must be proven again. **Fault →** `St`, re-arm to continue.
+4. **Fall / slow / too close →** it HOLDs (stays armed). **Let go of the trigger →** instant stop without dropping the selected TX mode. Keep it released for 2 continuous seconds and RX returns to manual ARMED, restores manual throttle for the next squeeze and clears the separation proof. The independent stationary-near reset also clears that proof after 2 seconds inside the effective engagement distance below 2 km/h. **Fault →** `St`, re-arm to continue.
 5. **Disarm:** repeat the arm gesture (toggle), or hold the magnet ~2 s (long buzz = off); arming RTM also disarms FM.
 
 > Before starting a new tow, explicitly disarm FM or select F0. The stationary-near rule normally

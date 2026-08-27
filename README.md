@@ -640,12 +640,14 @@ speed ceiling; F4's rider-relative front-gap governor remains active.
 
 While FM is following, a deliberate manual steering input temporarily takes steering priority
 without cancelling FM; the FM throttle cap and separation proof remain active, and centring the
-steering input returns control to FM. Releasing the trigger still stops the motor immediately, but
-now leaves FM armed in HOLD. Trigger release alone does not clear its separation proof; the proof is
-cleared only when fresh positions show the rider inside the effective engagement distance and below
-2 km/h continuously for 2 seconds. Squeezing again resumes FM when its geometry, sensor gates and
-latch are valid. Explicit F0/disarm remains the deterministic boundary before a new tow. Genuine
-faults and F4's physical loss of the front corridor keep their existing stop behavior.
+steering input returns control to FM. Releasing the trigger stops the motor immediately and initially
+leaves FM armed in HOLD. A short release preserves the separation proof; keeping the trigger released
+continuously for 2 seconds returns RX to manual ARMED, restores full manual throttle for the next
+squeeze and clears the proof while TX retains the selected mode. Fresh positions inside the effective
+engagement distance below 2 km/h for 2 seconds independently clear the proof. FM resumes only after
+its geometry, sensor gates and separation proof are valid again. Explicit F0/disarm remains the
+deterministic boundary before a new tow. Genuine faults and F4's physical loss of the front corridor
+keep their existing stop behavior.
 
 ### FM Proximity Warning
 

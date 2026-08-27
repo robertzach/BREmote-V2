@@ -48,7 +48,7 @@ FM_IDLE → FM_ARMED → FM_ACTIVE ↔ FM_HOLD
 - **FM_IDLE:** `fm_mode_runtime` = 0 or unset. `0xFF` means no live TX declaration and never falls back to stored RX config.
 - **FM_ARMED:** mode 1–4 selected; all monitoring runs; throttle chain inactive until activation conditions met. Display/telemetry reflect armed state (`fm_status`).
 - **FM_ACTIVE:** engaged when ALL activation conditions hold (§5). FM steering is used while the rider's steering input is centred; throttle cap chain on (§7).
-- **FM_HOLD:** a deadman or geometric condition pauses control with cap 0. Trigger release stops the motor immediately and preserves the selected mode. The separation proof also remains unless fresh positions show the rider inside effective `D_engage` and below 2 km/h continuously for 2 s; squeezing again resumes through the engage ramp when the remaining gates and latch are valid.
+- **FM_HOLD:** a deadman or geometric condition pauses control with cap 0. Trigger release stops the motor immediately and preserves the selected mode. A short release preserves the separation proof and may resume through the engage ramp; a continuous 2 s release changes the RX to `FM_ARMED`, clears the proof and restores manual throttle for the next squeeze. Fresh positions inside effective `D_engage` below 2 km/h for 2 s independently clear the proof.
 - **FM_STOPPING:** a sensor/link/heading or divergence fault ends the run, ramps the cap back to manual and requires a fresh TX declaration.
 - **Mutual exclusion with RTM:** unchanged (RTM arming silently disarms FM).
 
@@ -70,8 +70,9 @@ F4's independent physical front-corridor loss remains a safety HOLD and clears i
 8. Rider beyond engage distance: `dist > min_dist_m + followme_smoothing_band_m` to activate; deactivate (cap 0) only when `dist < min_dist_m` (Schmitt hysteresis — no flapping at the band edge).
 9. Rider moving: rider speed ≥ `foiler_low_speed_kmh`. Below it (rider down, idle, pumping slowly) → cap 0, hold FM_ARMED. Prevents maneuvering around a swimmer.
 
-Failure of 1 → deadman HOLD with cap 0 and no disarm. Failures 2–7 are genuine faults and end the
-FM run through STOPPING. Conditions 8–9 are geometric holds, not faults.
+Failure of 1 → immediate deadman HOLD with cap 0 and no TX disarm. If the release remains continuous
+for 2 s, RX changes to manual `FM_ARMED` and clears the separation proof. Failures 2–7 are genuine
+faults and end the FM run through STOPPING. Conditions 8–9 are geometric holds, not faults.
 
 ## 6. Target-point computation (the new control code)
 
@@ -102,9 +103,10 @@ automatic path across the rider exists.
 | 5 | Engage ramp: 0→cap over 3–4 s on every FM_ACTIVE entry | RTM ramp machinery |
 
 FM writes caps only. The human trigger remains the sole throttle source; trigger release stops the
-buggy through the unchanged base architecture without disarming FM. After FM has seen its first
-throttle input, the TX keeps its mode declaration alive until explicit F0/gesture disarm, RTM
-preemption, an RX-reported fault or declaration loss. The separation proof resets automatically
+buggy through the unchanged base architecture without disarming the TX mode. A continuous 2 s
+release also returns RX to manual `FM_ARMED` and clears the separation proof. After FM has seen its
+first throttle input, the TX keeps its mode declaration alive until explicit F0/gesture disarm, RTM
+preemption, an RX-reported fault or declaration loss. The separation proof also resets automatically
 after 2 s below 2 km/h while radial distance is inside effective `D_engage`; explicit disarm remains
 the deterministic session boundary before a new tow.
 
@@ -140,7 +142,7 @@ Deferred to a future bump (one field, shared with RTM): an RX-side autonomous-ru
 | Rider course invalid | speed < ~5 km/h | F1–F3 degrade to hold-station; F4 stops in HOLD and clears its front proof |
 | F4 no longer provably ahead/in front cone | signed lead / angle Schmitt fails | cap 0, HOLD, clear latch; fresh front proof required |
 | RTM armed | 0xF2/0 silent disarm | FM off (existing) |
-| Trigger released | physical | motor stops; FM stays in HOLD; latch persists unless the stationary-near reset also completes |
+| Trigger released | physical | motor stops immediately; a short release stays in HOLD with proof preserved, while 2 s continuously released returns RX to manual ARMED and clears the proof |
 | Rider stationary inside effective `D_engage` | radial distance < `D_engage` and filtered speed < 2 km/h for 2 s | clear latch; mode remains declared; fresh separation proof required |
 | Manual steering deflected ≥40 counts | raw RX steering input | rider steering wins; FM state/latch/cap preserved; centre to return |
 
