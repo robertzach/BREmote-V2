@@ -332,6 +332,7 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | `min_dist_m` | **10 m** (leave generous) | ACTIVE FM hard stop; cap 0 latches until trigger release |
 | `followme_smoothing_band_m` | **10 m** | Decel band above the hard stop (follow distance = min_dist_m + band) |
 | `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | FM speed ceiling |
+| `fm_diverge_dist_m` | **100 m default; tune lower deliberately** | Absolute sustained-divergence ceiling; firmware raises it to at least `2 × effective D_engage` and never permits more than 100 m |
 | `followme_mode` | **2 = Behind** (shipped default) | Pick the geometry and confirm it on the display — F1/F2/F3/F4 |
 | GPS anti-spoof (Phase A/B) | leave defaults: HDOP 2.0, accel 3.0 G, teleport 80 km/h, suspect 3, pair-dist 500 m, speed-diff 50 km/h | Tuned for this craft; only widen with reason |
 | `gps_dyn_model` | **0 (Sea)** — unless your water is above ~500 m altitude, then **4 (Automotive)** | The Sea navigation model has a 500 m ceiling and good fixes start being rejected above it. Sea is the better model below that, so leave it at 0 |

@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - fm_diverge_dist_m claims the banked rsvd_f32_1 slot in place as an absolute-metre setting. The effective limit is clamped to [2 x effective D_engage, 100 m]. Same final float, same offset and sizeof(confStruct)==192, so SW_VERSION remains 35 and stored RX configuration is not reset. Existing boards contain 0 in this formerly unused slot; 0 derives the previous 6 x D_engage limit and applies the new 100 m maximum. New/default configs store 100 m explicitly. No packet or struct-layout change.
 // V2.5-Evo - 2026-08-26 - Added shared compile-time kFmManualSteerDeadband=40 for FM manual-steering arbitration in both PWM.ino and RTMState.ino. No confStruct field/size/version change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - COMMENT-ONLY size correction (no code, no struct, no SW_VERSION change): the mag_orientation block claimed "sizeof 184 -> 188". The finished struct is 192 — mag_orientation (2) plus the two reserved slots rsvd_u16_1 (2) and rsvd_f32_1 (4) that landed in the same SW34->35 edit, naturally aligned with no tail pad. The static_assert has always said 192; only the prose was wrong. Corrected in three places: the mag_orientation block, the "confStruct is 184 bytes" line in the log_level block (retensed as history), and the static_assert's own trailing history, which never recorded the 184->192 step and now does. Flagged as load-bearing rather than cosmetic because the SW34->35 config-backup migration is pinned to the exact counts 184 (legacy) and 192 (current) and disables itself if either stops matching. Every remaining "184" in this file sits inside a dated change-history entry and is correct AS HISTORY — the static_assert is the SSOT for the current size.
 // V2.5-Evo - 2026-08-17 - defaultConf.vesc_timeout_s raised 6 -> 10 s, because a VESC cold restart takes roughly 8-9 seconds and 6 s is shorter than that: every restart blanked the rider's battery % and FET temperature to "N/A" on the TX while the VESC was merely booting. 10 s covers the restart and is still half the original hardcoded 20 s. VALUE-ONLY change to an existing field: no field added, moved, renamed or resized, and the 5-60 s validation range in ConfigService is untouched — so sizeof(confStruct) stays 192, the static_assert is unchanged, SW_VERSION stays 35 and the owner's SPIFFS config is NOT wiped by this flash. Because it is NOT wiped, a board with a stored vesc_timeout_s keeps its old value: it must be set on the device with `?set vesc_timeout_s 10` + `?save`. Second consumer checked — RTM Phase C check 2 uses the same field to decide when to SKIP its VESC-ERPM-vs-GPS-speed comparison; a longer timeout means fewer skips, and since a skipped check and a passed check have the identical outcome (no stop) the check's coverage can only widen, never shrink.
@@ -520,10 +521,11 @@ struct confStruct {
 
     uint16_t rsvd_u16_1;               // RESERVED. 0 = unused. Rename in place; do NOT bump.
 
-
-
-
-    float    rsvd_f32_1;               // RESERVED. 0 = unused. For a threshold or coefficient.
+    // V2.5-Evo - 2026-08-27 - RENAMED IN PLACE: rsvd_f32_1 -> fm_diverge_dist_m.
+    // Absolute distance ceiling for the sustained non-closing divergence detector. Runtime clamps
+    // it to at least 2 x effective D_engage and at most 100 m. 0 is the compatibility encoding for
+    // existing SW35 configs: derive the old 6 x D_engage value, then cap it at 100 m.
+    float    fm_diverge_dist_m;         // 0=legacy auto; explicit 1-100 m, effective min 2 x D_engage
 
 
 };
@@ -598,8 +600,7 @@ confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: convent
   0,          // mag_orientation: 0 deg. Set by ?compasscal (north-to-north) or ?magalign.
   0,            // rsvd_u16_1  RESERVED - 0 = unused
 
-
-  0.0f          // rsvd_f32_1  RESERVED - 0 = unused
+  100.0f        // fm_diverge_dist_m: absolute divergence ceiling; runtime min 2 x D_engage
 
 
 
@@ -631,7 +632,35 @@ confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: convent
 // Arduino build concatenates first — so the constant is visible to both. (An earlier comment claimed
 // concatenation order prevented sharing and used that to justify a duplicated literal. It was wrong.)
 // ============================================================
-static const float kFmEngageDistFloorM = 8.0f;   // metres; smallest legal non-zero fm_engage_dist_m
+static const float kFmEngageFactor       = 1.5f;   // auto D_engage multiplier on follow distance
+static const float kFmEngageDistFloorM   = 8.0f;   // smallest effective D_engage, metres
+
+// One shared D_engage calculation for ConfigService validation and the FM state machine.
+static inline float fmEffectiveEngageDistanceFromConfig(const confStruct &conf)
+{
+  float d_follow = conf.min_dist_m + conf.followme_smoothing_band_m;
+  if (d_follow < 0.5f) d_follow = 0.5f;
+
+  float d_engage = (conf.fm_engage_dist_m > 0.1f)
+      ? conf.fm_engage_dist_m
+      : (kFmEngageFactor * d_follow);
+  if (d_engage < kFmEngageDistFloorM) d_engage = kFmEngageDistFloorM;
+  return d_engage;
+}
+
+// Absolute FM divergence-distance rules. Zero remains a compatibility encoding because every SW35
+// board stored zero while this slot was unused; it reconstructs the old 6 x D_engage behavior, then
+// applies the new 100 m maximum. Explicit values are metres and can never be effective below
+// 2 x D_engage. If that minimum itself exceeds 100 m, the requested absolute maximum wins.
+static const float kFmDivergeLegacyFactor   = 6.0f;
+static const float kFmDivergeMinEngageRatio = 2.0f;
+static const float kFmDivergeMaxDistM        = 100.0f;
+
+static inline float fmMinimumDivergeDistanceFromConfig(const confStruct &conf)
+{
+  float minimum = kFmDivergeMinEngageRatio * fmEffectiveEngageDistanceFromConfig(conf);
+  return (minimum < kFmDivergeMaxDistM) ? minimum : kFmDivergeMaxDistM;
+}
 
 // Follow-Me manual-steering takeover threshold, in raw steering counts either side of centre.
 // A deliberate deflection at or beyond this threshold wins over FM's automatic steering while

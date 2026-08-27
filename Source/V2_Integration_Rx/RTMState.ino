@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - FM divergence ceiling is now configurable as the absolute-metre fm_diverge_dist_m. Its effective value is never below 2 x D_engage and never above 100 m. The setting claims the existing final reserved float without changing layout or SW_VERSION; 0 reconstructs the old 6 x D_engage behavior and applies the new 100 m cap for existing SW35 configs. Dwell, closure epsilon, engage grace and fault path are unchanged.
 // V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F4 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
 // V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival below effective D_engage and a moving-rider cancellation preserve the live F1-F4 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
@@ -1336,7 +1337,6 @@ static const float    kFmMotionBaselineS     = 0.4f;   // seconds
 // followme_smoothing_band_m have no lower bound of their own, so a small tuning can make this
 // product tiny — which is why kFmEngageDistFloorM is applied to the RESULT of this multiplication
 // as well, not just to a manually typed fm_engage_dist_m. See the F3-c clamp in runFmLoop().
-static const float    kFmEngageFactor        = 1.5f;   // multiplier on d_follow
 
 // How long the rider must stay beyond D_engage before the separation latch sets.
 // The rider position arrives at 2 Hz, so 2000 ms = 4 consecutive independent GPS fixes.
@@ -1403,14 +1403,11 @@ static const uint32_t kFmFaultStickyMs       = 6000;   // ms
 // shape (a single sustained-condition timer, cleared the instant the condition stops holding) and
 // change only the test itself.
 
-// Multiple of D_engage beyond which the buggy is considered far enough away for the sustained
-// not-closing test below to classify it as diverging. Scales automatically with the effective
-// engage distance: the configured fm_engage_dist_m when non-zero, otherwise the auto-computed
-// D_engage. V2.5-Evo - 2026-08-25: raised 2x -> 6x so normal catch-up, alignment and GPS scatter
-// cannot start the divergence dwell close to the intended follow geometry. Examples: an explicit
-// 11 m engage distance now gives a 66 m ceiling; auto D_engage=30 m gives a 180 m ceiling. The
-// existing 3 s dwell and requirement to fail to close by more than 2 m are unchanged.
-static const float    kFmDivergeFactor       = 6.0f;   // multiplier on effective D_engage
+// Absolute distance beyond which the sustained not-closing test may classify the buggy as
+// diverging. Since 2026-08-27 this comes from usrConf.fm_diverge_dist_m through
+// fmEffectiveDivergeDistance(). Explicit values are metres, with a dynamic minimum of
+// 2 x D_engage and an absolute maximum of 100 m. Zero reconstructs the old 6 x D_engage limit for
+// existing SW35 configs before the 100 m cap. Dwell and closure epsilon remain unchanged.
 
 // How long the distance must stay beyond that limit before it counts as divergence. Rider position
 // arrives at 2 Hz, so 3000 ms is ~6 consecutive independent fixes — the same spike-proofing argument
@@ -1551,7 +1548,7 @@ static unsigned long fm_fault_alarm_ms   = 0;
 static bool          fm_geometry_warning = false;  // bit6: radial/separation geometry warning only
 static bool          fm_front_warning    = false;  // bit7: F4 front-position warning only
 
-// V2.5-Evo - 2026-07-25 - A3: millis() when dist_m first exceeded kFmDivergeFactor x D_engage while
+// V2.5-Evo - 2026-07-25 - A3: millis() when dist_m first exceeded the effective absolute limit while
 // FM was ACTIVE; 0 = not currently beyond it. Counts the kFmDivergeMs dwell for the divergence fault.
 // Reset discipline is copied from runPhaseC's rtm_prev_dist_m and from fm_sep_over_since_ms: cleared
 // the moment the condition stops holding, whenever the distance is untrustworthy (trigger released,
@@ -2465,14 +2462,24 @@ static void fmEnterIdle()
 // FM_RETURN entry/arrival and divergence all consume this exact same value.
 static float fmEffectiveEngageDistance()
 {
-  float d_follow = usrConf.min_dist_m + usrConf.followme_smoothing_band_m;
-  if (d_follow < 0.5f) d_follow = 0.5f;
+  return fmEffectiveEngageDistanceFromConfig(usrConf);
+}
 
-  float d_engage = (usrConf.fm_engage_dist_m > 0.1f)
-      ? usrConf.fm_engage_dist_m
-      : (kFmEngageFactor * d_follow);
-  if (d_engage < kFmEngageDistFloorM) d_engage = kFmEngageDistFloorM;
-  return d_engage;
+// Explicit values are absolute metres. Zero is what existing SW35 configs contain in the formerly
+// reserved slot, so it reconstructs the previous 6 x D_engage limit. Every path is finally clamped
+// to the requested [2 x D_engage, 100 m] interval. The upper bound wins if 2 x D_engage exceeds 100.
+static float fmEffectiveDivergeDistance(float d_engage)
+{
+  float minimum = kFmDivergeMinEngageRatio * d_engage;
+  if (minimum > kFmDivergeMaxDistM) minimum = kFmDivergeMaxDistM;
+
+  float limit = usrConf.fm_diverge_dist_m;
+  if (!(limit > 0.0f && limit <= kFmDivergeMaxDistM)) {
+    limit = kFmDivergeLegacyFactor * d_engage;
+  }
+  if (limit < minimum) limit = minimum;
+  if (limit > kFmDivergeMaxDistM) limit = kFmDivergeMaxDistM;
+  return limit;
 }
 
 // FM_RETURN position proof deliberately excludes heading and trigger. A stationary rider can arm
@@ -2775,6 +2782,7 @@ void runFmLoop()
   bool  active_session  = (fm_state == FM_ACTIVE);
   float dist_m   = 0.0f;
   float d_engage = fmEffectiveEngageDistance();
+  float diverge_limit_m = fmEffectiveDivergeDistance(d_engage);
   bool  front_mode           = (m == 4);
   bool  front_geometry_valid = false;
   float front_along_m        = 0.0f;
@@ -2788,7 +2796,6 @@ void runFmLoop()
   // printed at the moment of detection, which is upstream of the cap write, so a full UART TX buffer
   // could block inside Serial.printf() and delay the hard stop by however long the host took to drain
   // it. The motor must reach 0 first and the explanation can wait; nothing else reads these.
-  float diverge_limit_m = 0.0f;   // the ceiling (kFmDivergeFactor x D_engage) that was exceeded, m
   float diverge_start_m = 0.0f;   // the distance captured when the dwell started, m
 
   // Position trust is narrower than fault_ok: radial thresholds need both plausible/fresh positions,
@@ -3019,7 +3026,7 @@ void runFmLoop()
     // ---- A3: DIVERGENCE FAULT — the upper bound FM never had ----
     // V2.5-Evo - 2026-07-25. Condition 8 above is a lower bound only, so a buggy steering the WRONG
     // WAY satisfies it more and more comfortably the further it runs. This adds the missing ceiling:
-    // while FM is ACTIVE, being further than kFmDivergeFactor x D_engage from the rider AND FAILING
+    // while FM is ACTIVE, being further than the effective absolute limit from the rider AND FAILING
     // TO CLOSE for kFmDivergeMs is not "following badly", it is "not following", and it is a FAULT.
     //
     // V2.5-Evo - 2026-07-25 - F1: this used to be a BARE THRESHOLD (beyond the ceiling for the dwell
@@ -3077,7 +3084,7 @@ void runFmLoop()
     }
     else if (was_controlling && hard_ok && !return_proof_wait &&
              !fm_min_dist_stop_latched &&
-             dist_m > (kFmDivergeFactor * d_engage)) {
+             dist_m > diverge_limit_m) {
       if (fm_diverge_since_ms == 0) {
         // First tick beyond the ceiling: start the dwell and record what we are closing FROM.
         fm_diverge_since_ms     = now;
@@ -3087,7 +3094,6 @@ void runFmLoop()
           // Beyond the ceiling for the full dwell and NOT closing — this is divergence.
           // F7: the numbers are stashed and printed later, after fm_throttle_cap = 0.
           diverge_fault   = true;
-          diverge_limit_m = kFmDivergeFactor * d_engage;
           diverge_start_m = fm_diverge_start_dist_m;
         } else {
           // It has closed by more than the epsilon: the buggy IS following, just far. No fault —
@@ -3260,7 +3266,7 @@ void runFmLoop()
       // — so if the USB CDC TX buffer was full (host not draining) Serial.printf() could block and
       // defer the hard stop for as long as the host took. Motor to 0 first, explain afterwards.
       if (diverge_fault) {
-        Serial.printf("FM [RX] DIVERGENCE FAULT: dist=%.1f m (was %.1f m at dwell start, closed <%.1f m) > limit %.1f m sustained %lu ms — not closing\n",
+        Serial.printf("FM [RX] DIVERGENCE FAULT: dist=%.1f m (was %.1f m at dwell start, closed <=%.1f m) > absolute limit %.1f m sustained %lu ms — not closing\n",
                       (double)dist_m, (double)diverge_start_m, (double)kFmDivergeCloseEpsM,
                       (double)diverge_limit_m, (unsigned long)kFmDivergeMs);
       }

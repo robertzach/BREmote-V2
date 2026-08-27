@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - rsvd_f32_1 renamed in place to fm_diverge_dist_m. Explicit values are absolute metres, raised to at least 2 x effective D_engage and capped at 100 m. 0 preserves existing SW35 configs by deriving the old 6 x D_engage limit before applying the 100 m cap. Same float/offset/sizeof, SW_VERSION stays 35 and no config wipe occurs.
 // V2.5-Evo - 2026-08-25 - Follow-Me mode validation extended 0-3 -> 0-4 for F4 In Front. Range only; no confStruct/SW_VERSION change.
 // RX-specific config field table and cross-validation.
 // Shared engine is in ../Common/ConfigServiceEngine.h (included via BREmote_V2_Rx.h).
@@ -119,19 +120,21 @@ const CfgFieldSpec kCfgFields[] = {
   // starts and ends pointing north) or ?magalign. Snapped to cardinals - the 3.2 deg idle
   // noise floor cannot justify finer resolution.
   {"mag_orientation", CFG_U16, offsetof(confStruct, mag_orientation), true, false, true, 0.0f, 270.0f, 0, false},
-  // V2.5-Evo - 2026-08-16 - RESERVED slots, validated but unread. They are listed here so a
+  // V2.5-Evo - 2026-08-16 - Banked slots are listed here so a
 
   // config blob containing them round-trips through ?conf / ?setconf and JSON import without
 
-  // being rejected as unknown. Ranges are wide on purpose - the eventual meaning is unknown,
+  // being rejected as unknown. The remaining u16 range is wide because its eventual meaning is unknown,
 
-  // and a slot that rejects its own future value is worse than useless. When one is claimed,
+  // and a slot that rejects its own future value is worse than useless. When a slot is claimed,
 
   // RENAME IT IN PLACE here and in confStruct, tighten the range, and do NOT bump SW_VERSION.
 
   {"rsvd_u16_1", CFG_U16,   offsetof(confStruct, rsvd_u16_1), true, false, true, 0.0f, 65535.0f, 0, false},
 
-  {"rsvd_f32_1", CFG_FLOAT, offsetof(confStruct, rsvd_f32_1), true, false, true, -1e6f, 1e6f,    3, false},
+  // Claims rsvd_f32_1 in place. 0 is the legacy-auto encoding; explicit values are metres.
+  {"fm_diverge_dist_m", CFG_FLOAT, offsetof(confStruct, fm_diverge_dist_m), true, false, true,
+   0.0f, kFmDivergeMaxDistM, 1, false},
 
   // V2.5-Evo - 2026-07-20 - SW34 reserved fields (validation only; not read by v1 control law)
   // V2.5-Evo - 2026-07-25 - A2: fm_engage_dist_m is NO LONGER RESERVED — it is now read live by
@@ -258,6 +261,31 @@ bool cfgValidateCrossField(confStruct &candidate, String &err)
     Serial.println("      to engage while you are still on the rope. Measure your rope and set at");
     Serial.println("      least a metre beyond it. Setting 0 (automatic) is floored at the same value.");
 
+  }
+
+  // Keep same-version SW35 configs valid even if the formerly reserved float contains an old,
+  // out-of-range value. New ?set/web writes are range-checked before reaching here; boot/blob load
+  // reaches this hook first, so normalising legacy garbage prevents an unrelated full config reset.
+  if (!isfinite(candidate.fm_diverge_dist_m) ||
+      candidate.fm_diverge_dist_m < 0.0f ||
+      candidate.fm_diverge_dist_m > kFmDivergeMaxDistM)
+  {
+    candidate.fm_diverge_dist_m = 0.0f;
+    Serial.println("NOTE: FM Divergence Distance invalid legacy value replaced by compatibility auto.");
+  }
+
+  // Explicit metre values are stored no lower than the dynamic 2 x D_engage floor. Zero stays zero
+  // so an existing board retains the previous 6 x D_engage behavior (with the new 100 m maximum).
+  if (candidate.fm_diverge_dist_m > 0.0f)
+  {
+    float minimum = fmMinimumDivergeDistanceFromConfig(candidate);
+    if (candidate.fm_diverge_dist_m < minimum)
+    {
+      float asked = candidate.fm_diverge_dist_m;
+      candidate.fm_diverge_dist_m = minimum;
+      Serial.printf("NOTE: FM Divergence Distance %.1f m raised to %.1f m (2 x effective D_engage, capped at 100 m).\n",
+                    asked, minimum);
+    }
   }
 
   // ============================================================

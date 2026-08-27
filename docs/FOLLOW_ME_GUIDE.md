@@ -214,6 +214,7 @@ fault while you're holding the trigger. A stop after you've already let go just 
 | `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
 | `fm_engage_dist_m` | radial F1–F4 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
+| `fm_diverge_dist_m` | absolute upper FM_ACTIVE divergence-test distance | default/max 100 m; values below `2 × D_engage` are raised to that minimum; legacy 0 derives the old `6 × D_engage` value under the 100 m cap; fault still needs 3 s without more than 2 m closure |
 | `rtm_target_speed_kmh` | FM_RETURN speed target (historical key) | 0 = 5 km/h; hard maximum 8 km/h |
 | `rtm_approach_zone_m` | FM_RETURN slowdown-band width outside the arrival radius (historical key) | minimum effective width 2 m |
 

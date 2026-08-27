@@ -315,7 +315,7 @@ bool readConfFromSPIFFS(confStruct& data) {
 //   The RX SW34 -> SW35 change APPENDED its new fields at the very END of confStruct:
 //     SW34 = 184 bytes, ending with log_level (uint16_t) at offset 182.
 //     SW35 = those same 184 bytes, then mag_orientation (uint16_t, 2) + rsvd_u16_1 (uint16_t, 2)
-//            + rsvd_f32_1 (float, 4) = 192 bytes.
+//            + rsvd_f32_1 (float, 4; now named fm_diverge_dist_m) = 192 bytes.
 //   Nothing was inserted, moved, resized or reordered inside the first 184 bytes, so an SW34 blob
 //   is a BYTE-EXACT PREFIX of an SW35 struct: copying it into the front of an SW35 struct puts every
 //   value back at the offset it already belonged to.
@@ -391,10 +391,10 @@ bool cfgMigrateLegacyBlob(const uint8_t* blob, size_t decodedLen, uint16_t blobV
     confStruct staged;
 
     // Zero first, then overlay the legacy prefix. Zeroing the whole struct is what sets the three
-    // fields SW34 never had - mag_orientation, rsvd_u16_1 and rsvd_f32_1 - to 0, and 0 is the
-    // behaviour-preserving default for all three (mag_orientation 0 = no rotation; both reserved
-    // slots are unused and defined as 0 = unused). Doing it with a memset rather than by naming the
-    // three fields means a future appended field cannot be forgotten here and left holding whatever
+    // fields SW34 never had - mag_orientation, rsvd_u16_1 and fm_diverge_dist_m - to 0, and 0 is the
+    // behaviour-preserving encoding for all three (mag_orientation 0 = no rotation; rsvd_u16_1 is
+    // unused; fm_diverge_dist_m 0 = legacy 6 x D_engage with the 100 m cap). Doing it with a memset rather than
+    // by naming the three fields means a future appended field cannot be forgotten here and left holding whatever
     // happened to be on the stack.
     memset(&staged, 0, sizeof(staged));
 

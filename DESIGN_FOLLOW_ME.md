@@ -129,9 +129,14 @@ FM Return, an RX-reported fault or declaration loss. Ordinary trigger release pr
 separation proof. A release after the `min_dist_m` stop specifically clears it, so the next automatic
 run must again prove `dist > D_engage`. Explicit disarm remains the deterministic session boundary.
 
-## 8. Parameters — zero new confStruct fields for F4
+## 8. Parameters
 
 F4 reuses the existing FM parameters (no SW_VERSION bump):
+
+`fm_diverge_dist_m` also requires no version bump: it renames the banked final float slot in place,
+so `confStruct` remains 192 bytes. Explicit values are absolute metres. The effective value is raised
+to `2 × D_engage` when necessary and capped at 100 m. Existing SW35 configurations contain `0`; this
+compatibility value reconstructs the old `6 × D_engage` limit and then applies the 100 m cap.
 
 | Param | v1 role | Owner default |
 |---|---|---|
@@ -142,6 +147,7 @@ F4 reuses the existing FM parameters (no SW_VERSION bump):
 | `boogie_vmax_in_followme_kmh` | FM absolute speed ceiling; 0 = no absolute ceiling (F4 gap governor remains active) | 25 km/h (~15.5 mph) |
 | `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4 warning Schmitt only | 35° / 45° |
 | `fm_engage_dist_m` | one radial F1–F4 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
+| `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |
 | `rtm_target_speed_kmh` | historical key: FM Return GPS speed target; 0 uses 5 km/h, hard-limited to 8 km/h | 4 km/h |
 | `rtm_align_threshold_deg` | historical key: FM Return align threshold | 45° |
 | `rtm_approach_zone_m` | historical key: FM Return slowdown-band width outside `D_engage`; minimum effective width 2 m | 12 m |
@@ -160,6 +166,7 @@ not used at runtime.
 | RX GPS loss | age > 6 s | same |
 | Heading source invalid | ladder empty | same |
 | LoRa loss | > `failsafe_time` | PWM pulses stop immediately; FM fault/disarm when control resumes |
+| Sustained divergence | distance > effective `fm_diverge_dist_m` for 3 s without closing by more than 2 m (after engage grace) | cap 0, STOPPING → IDLE, re-arm required |
 | Rider reaches stop radius | dist ≤ `min_dist_m` while ACTIVE and trigger held | latch cap 0; distance recovery alone does nothing; trigger release clears stop + separation proof and exposes manual cap 255 |
 | Rider stationary | filtered speed < 2 km/h for 2 s | outside `D_engage`: `FM_RETURN`; inside it: no special transition |
 | Rider course invalid | speed < ~5 km/h | F1–F3 use radial hold-station target; F4 goes straight on buggy heading and raises warning |

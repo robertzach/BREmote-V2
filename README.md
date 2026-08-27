@@ -568,6 +568,19 @@ proof, and automatic FM must again remain outside this distance for 2 seconds. W
 - `0` = auto: the firmware works it out as 1.5 × (Min Distance + Smoothing Band). Use a measured value if you know your rope.
 - You have to stay beyond this distance for 2 seconds before Follow-Me can engage.
 
+### FM Divergence Limit (RX)
+
+`fm_diverge_dist_m` sets the absolute upper distance at which FM_ACTIVE starts checking for
+sustained divergence. The firmware raises an explicit value to at least `2 × effective D_engage`
+and caps it at 100 m. The default is 100 m. Existing SW35 configurations contain `0` in the reused
+reserved slot; that compatibility value reconstructs the previous `6 × D_engage` threshold and
+then applies the new 100 m cap.
+
+Crossing the limit alone is not a fault: after the existing engage grace, the buggy must remain
+beyond it for 3 seconds without closing by more than 2 m. Example: with `D_engage=11 m`, the minimum
+is 22 m. A configured 60 m remains 60 m; a configured 15 m is stored as 22 m. Configure it on the RX
+with `?set fm_diverge_dist_m 60`, then `?save`; inspect it with `?get fm_diverge_dist_m`.
+
 ### SPIFFS Configuration (TX)
 
 <details>
