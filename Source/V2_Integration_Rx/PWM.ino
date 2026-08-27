@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Throttle-dependent steering authority: after manual/FM arbitration, scale the selected steering command about neutral 127 using effective throttle and the configurable smoothstep curve (default full authority through 50%, 35% at full throttle). This covers manual riding, FM manual takeover and automatic FM identically.
 // V2.5-Evo - 2026-08-26 - FM manual steering takeover: a rider deflection outside kFmManualSteerDeadband immediately wins over the FM steering override without changing FM state, separation latch or throttle cap. Centring the stick hands steering back to FM. RTM behaviour is unchanged.
 // V2.5-Evo - 2026-07-19 - P3 FM: calcPWM() applies fm_throttle_cap (subtract-only, lowest cap wins) and lets fm_rx_active gate the steering override alongside rtm_rx_active. Throttle can still only be reduced, never added, and the thr_received>=25 steering gate is unchanged.
 // V2.5-Evo - 2026-07-19 - FM triage: calcPWM() records effective_steer into g_effective_steer (diagnostic observer only — no control-path change) so the logger can show the actuation gap
@@ -100,6 +101,17 @@ void calcPWM()
                              thr_received >= 25)
                             ? (uint8_t)rtm_steer_override
                             : steering_received;
+
+  // Apply one rollover-protection curve AFTER manual-vs-automatic arbitration, so manual riding,
+  // deliberate manual takeover during FM and automatic FM all receive the same limit. Use the
+  // throttle actually permitted by the FM safety-cap chain: reduced motor power restores the
+  // corresponding low-throttle steering authority. Scaling only the delta from 127 cannot create
+  // a left/right bias. A 100% full-throttle setting disables the reduction.
+  effective_steer = applyThrottleSteeringAuthority(
+      effective_steer,
+      effective_thr,
+      (float)usrConf.steer_reduction_start_pct,
+      usrConf.steer_full_throttle_pct);
 
   // V2.5-Evo - 2026-07-19 - FM triage: record the steering byte actually applied this loop for
   // the logger. Diagnostic observer only — this write does not alter any PWM/motor control path.

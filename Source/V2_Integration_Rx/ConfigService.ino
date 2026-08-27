@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Throttle-dependent steering config without a version bump: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct (20-100%, default 35), and rsvd_u16_1 renamed in place to steer_reduction_start_pct (30-80%, default 50). cfgValidateCrossField() recognises legacy/invalid values and promotes them before field validation. Offsets/types/sizeof stay unchanged at 192 bytes; SW_VERSION remains 35.
 // V2.5-Evo - 2026-08-27 - rsvd_f32_1 renamed in place to fm_diverge_dist_m. Explicit values are absolute metres, raised to at least 2 x effective D_engage and capped at 100 m. 0 preserves existing SW35 configs by deriving the old 6 x D_engage limit before applying the 100 m cap. Same float/offset/sizeof, SW_VERSION stays 35 and no config wipe occurs.
 // V2.5-Evo - 2026-08-25 - Follow-Me mode validation extended 0-3 -> 0-4 for F4 In Front. Range only; no confStruct/SW_VERSION change.
 // RX-specific config field table and cross-validation.
@@ -28,6 +29,8 @@ const CfgFieldSpec kCfgFields[] = {
   {"rf_power", CFG_I16, offsetof(confStruct, rf_power), true, true, true, -9.0f, 22.0f, 0, false},
   {"steering_type", CFG_U16, offsetof(confStruct, steering_type), true, false, true, 0.0f, 2.0f, 0, false},
   {"steering_influence", CFG_U16, offsetof(confStruct, steering_influence), true, false, true, 0.0f, 100.0f, 0, false},
+  {"steer_reduction_start_pct", CFG_U16, offsetof(confStruct, steer_reduction_start_pct), true, false, true, (float)kSteerReductionStartMinPct, (float)kSteerReductionStartMaxPct, 0, false},
+  {"steer_full_throttle_pct", CFG_FLOAT, offsetof(confStruct, steer_full_throttle_pct), true, false, true, kSteerFullThrottleMinPct, kSteerFullThrottleMaxPct, 1, false},
   {"steering_inverted", CFG_U16, offsetof(confStruct, steering_inverted), true, false, true, 0.0f, 1.0f, 0, false},
   {"trim", CFG_I16, offsetof(confStruct, trim), true, false, true, -500.0f, 500.0f, 0, false},
   {"pwm0_min", CFG_U16, offsetof(confStruct, PWM0_min), true, false, true, 500.0f, 2500.0f, 0, false},
@@ -120,18 +123,6 @@ const CfgFieldSpec kCfgFields[] = {
   // starts and ends pointing north) or ?magalign. Snapped to cardinals - the 3.2 deg idle
   // noise floor cannot justify finer resolution.
   {"mag_orientation", CFG_U16, offsetof(confStruct, mag_orientation), true, false, true, 0.0f, 270.0f, 0, false},
-  // V2.5-Evo - 2026-08-16 - Banked slots are listed here so a
-
-  // config blob containing them round-trips through ?conf / ?setconf and JSON import without
-
-  // being rejected as unknown. The remaining u16 range is wide because its eventual meaning is unknown,
-
-  // and a slot that rejects its own future value is worse than useless. When a slot is claimed,
-
-  // RENAME IT IN PLACE here and in confStruct, tighten the range, and do NOT bump SW_VERSION.
-
-  {"rsvd_u16_1", CFG_U16,   offsetof(confStruct, rsvd_u16_1), true, false, true, 0.0f, 65535.0f, 0, false},
-
   // Claims rsvd_f32_1 in place. 0 is the legacy-auto encoding; explicit values are metres.
   {"fm_diverge_dist_m", CFG_FLOAT, offsetof(confStruct, fm_diverge_dist_m), true, false, true,
    0.0f, kFmDivergeMaxDistM, 1, false},
@@ -177,6 +168,25 @@ const size_t kCfgFieldCount = sizeof(kCfgFields) / sizeof(kCfgFields[0]);
 
 bool cfgValidateCrossField(confStruct &candidate, String &err)
 {
+  // Same-version migration for the two reused steering slots. Normal SW35 configurations have
+  // zero in the former rsvd_u16_1 field; SW34->35 prefix migration also zeroes that appended slot.
+  // Treat an out-of-range start value as the legacy marker and initialise BOTH values, because the
+  // float at steer_full_throttle_pct used to mean foiler_low_speed_kmh and must not be reinterpreted
+  // as steering authority. This runs before validateConfig() on every boot/import/save path.
+  const ThrottleSteeringConfigRepair steeringRepair = normalizeThrottleSteeringConfig(
+      candidate.steer_reduction_start_pct,
+      candidate.steer_full_throttle_pct);
+  if (steeringRepair == STEER_CONFIG_REPAIRED_BOTH)
+  {
+    Serial.println("NOTE: Legacy throttle-steering slots initialised to 50% start / 35% full-throttle authority.");
+  }
+  else if (steeringRepair == STEER_CONFIG_REPAIRED_FULL_THROTTLE)
+  {
+    // Covers a config that already carries a valid start value (for example from an experimental
+    // steering build) while the reclaimed middle float still contains its former low-speed value.
+    Serial.println("NOTE: Invalid Full-Throttle Steering value replaced by the 35% default.");
+  }
+
   if (candidate.PWM0_max <= candidate.PWM0_min)
   {
     err = "ERR_CROSS:PWM0_max must be > PWM0_min";

@@ -545,6 +545,25 @@ throttle is already zero. Geometry/front loss produces one medium vibration imme
 separation proof; automatic FM can resume only after another radial `>D_engage` 2-second proof.
 Explicit F0/disarm remains the deterministic boundary; genuine sensor/link faults still end the run.
 
+### Throttle-dependent steering (RX)
+
+The RX reduces steering authority progressively at high effective throttle to lower rollover risk.
+The curve is applied after manual/automatic steering selection, so it covers normal manual riding,
+manual takeover during Follow-Me and automatic Follow-Me identically. It uses `effective_thr` after
+the FM safety cap: when motor power is genuinely capped, the matching lower-throttle steering
+authority remains available.
+
+| RX parameter | Default | Range | Description |
+|---|---:|---:|---|
+| `steer_reduction_start_pct` | 50% | 30–80% | Full steering at and below this effective throttle; smooth reduction begins above it. |
+| `steer_full_throttle_pct` | 35% | 20–100% | Steering authority retained at full throttle; 100% disables the reduction. |
+
+With the defaults, authority is approximately 100% at 50% throttle, 77% at 70%, 58% at 80%,
+42% at 90% and 35% at full throttle. This multiplies `steering_influence`: the default 50%
+influence therefore becomes 17.5% effective differential influence at full throttle. The limiter
+is throttle-based rather than speed-based; bench-test first, then validate at low speed in a clear
+area before a full-power run.
+
 ### FM Proximity Warning
 
 If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires a 2×Pattern-2 vibration burst warning (2 short × 2, with 300 ms gap).

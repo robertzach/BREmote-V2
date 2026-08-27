@@ -1,6 +1,7 @@
 #ifndef SPIFFS_ENGINE_H
 #define SPIFFS_ENGINE_H
 
+// V2.5-Evo - 2026-08-27 - SW34->35 prefix migration now documents throttle-steering slot reuse: the appended zero start field is the marker that promotes both settings to 50%/35%, preventing the copied legacy foiler-low-speed float from being reinterpreted as steering authority. Migration sizes and control flow are unchanged.
 // V2.5-Evo - 2026-08-16 - Legacy config-blob migration: an SW34 (184-byte) RX backup is now accepted and migrated onto the SW35 (192-byte) struct, because SW34 is a byte-exact prefix of SW35. Gated on that exact size/version pair only; inert on the TX.
 // V2.5-Evo - 2026-08-16 - readConfFromSPIFFS() stages the decoded blob in a local copy and only writes it into the caller's struct AFTER validation passes; a rejected config no longer runs the board.
 // V2.5-Evo - 2026-07-21 - Stale-config trap fix (shared TX/RX): getConfFromSPIFFS() now re-bakes defaults on a SAME-SIZE SW_VERSION mismatch instead of running on stale config bytes. Dormant when versions match — no wipe on a same-version reflash.
@@ -314,7 +315,8 @@ bool readConfFromSPIFFS(confStruct& data) {
 // WHY A MIGRATION IS SAFE FOR THIS ONE PAIR, AND ONLY THIS ONE PAIR
 //   The RX SW34 -> SW35 change APPENDED its new fields at the very END of confStruct:
 //     SW34 = 184 bytes, ending with log_level (uint16_t) at offset 182.
-//     SW35 = those same 184 bytes, then mag_orientation (uint16_t, 2) + rsvd_u16_1 (uint16_t, 2)
+//     SW35 = those same 184 bytes, then mag_orientation (uint16_t, 2)
+//            + steer_reduction_start_pct (uint16_t, 2; originally rsvd_u16_1)
 //            + rsvd_f32_1 (float, 4; now named fm_diverge_dist_m) = 192 bytes.
 //   Nothing was inserted, moved, resized or reordered inside the first 184 bytes, so an SW34 blob
 //   is a BYTE-EXACT PREFIX of an SW35 struct: copying it into the front of an SW35 struct puts every
@@ -325,6 +327,9 @@ bool readConfFromSPIFFS(confStruct& data) {
 //       no concept of compass mounting orientation at all, so there is no old value to carry.
 //     - gps_dyn_model was RENAMED IN PLACE from a reserved slot, so an SW34 board already stores 0
 //       in it, and 0 resolves to Sea - the SW34 behaviour. Nothing to translate.
+//     - steer_full_throttle_pct reuses the retired foiler_low_speed_kmh float inside the legacy
+//       prefix. The appended steer_reduction_start_pct is zero after migration; cfgValidateCrossField()
+//       uses that marker to replace both old meanings with the new 50% / 35% steering defaults.
 //
 // WHY IT FAILS CLOSED, AND WHEN IT STOPS BEING SAFE
 //   The prefix argument holds ONLY for these four numbers. It is not a general rule, and it is NOT
@@ -390,10 +395,12 @@ bool cfgMigrateLegacyBlob(const uint8_t* blob, size_t decodedLen, uint16_t blobV
     // follows, and for the same reason: a config that fails validation must never have run the board.
     confStruct staged;
 
-    // Zero first, then overlay the legacy prefix. Zeroing the whole struct is what sets the three
-    // fields SW34 never had - mag_orientation, rsvd_u16_1 and fm_diverge_dist_m - to 0, and 0 is the
-    // behaviour-preserving encoding for all three (mag_orientation 0 = no rotation; rsvd_u16_1 is
-    // unused; fm_diverge_dist_m 0 = legacy 6 x D_engage with the 100 m cap). Doing it with a memset rather than
+    // Zero first, then overlay the legacy prefix. Zeroing the whole struct sets the three fields
+    // SW34 never had - mag_orientation, steer_reduction_start_pct and fm_diverge_dist_m - to 0.
+    // mag_orientation=0 is neutral; fm_diverge_dist_m=0 preserves legacy auto behaviour; and
+    // cfgValidateCrossField() recognises steer_reduction_start_pct=0 as the marker that promotes
+    // both steering settings to 50% / 35% (overwriting the legacy foiler-low-speed value copied
+    // into steer_full_throttle_pct). Doing it with a memset rather than
     // by naming the three fields means a future appended field cannot be forgotten here and left holding whatever
     // happened to be on the stack.
     memset(&staged, 0, sizeof(staged));

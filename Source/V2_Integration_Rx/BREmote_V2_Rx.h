@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Throttle-dependent steering without a config reset: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct and rsvd_u16_1 renamed in place to steer_reduction_start_pct. Defaults 35%/50%; cfgValidateCrossField() migrates legacy values before validation. PWM applies the smoothstep curve after manual/FM arbitration using effective throttle, so manual riding and automatic FM share the same rollover protection. Types, offsets, sizeof(confStruct)==192 and SW_VERSION 35 are unchanged.
 // V2.5-Evo - 2026-08-27 - fm_diverge_dist_m claims the banked rsvd_f32_1 slot in place as an absolute-metre setting. The effective limit is clamped to [2 x effective D_engage, 100 m]. Same final float, same offset and sizeof(confStruct)==192, so SW_VERSION remains 35 and stored RX configuration is not reset. Existing boards contain 0 in this formerly unused slot; 0 derives the previous 6 x D_engage limit and applies the new 100 m maximum. New/default configs store 100 m explicitly. No packet or struct-layout change.
 // V2.5-Evo - 2026-08-26 - Added shared compile-time kFmManualSteerDeadband=40 for FM manual-steering arbitration in both PWM.ino and RTMState.ino. No confStruct field/size/version change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - COMMENT-ONLY size correction (no code, no struct, no SW_VERSION change): the mag_orientation block claimed "sizeof 184 -> 188". The finished struct is 192 — mag_orientation (2) plus the two reserved slots rsvd_u16_1 (2) and rsvd_f32_1 (4) that landed in the same SW34->35 edit, naturally aligned with no tail pad. The static_assert has always said 192; only the prose was wrong. Corrected in three places: the mag_orientation block, the "confStruct is 184 bytes" line in the log_level block (retensed as history), and the static_assert's own trailing history, which never recorded the 184->192 step and now does. Flagged as load-bearing rather than cosmetic because the SW34->35 config-backup migration is pinned to the exact counts 184 (legacy) and 192 (current) and disables itself if either stops matching. Every remaining "184" in this file sits inside a dated change-history entry and is correct AS HISTORY — the static_assert is the SSOT for the current size.
@@ -59,6 +60,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/SteeringCurve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -147,10 +149,11 @@ struct confStruct {
     float boogie_vmax_in_followme_kmh; // Maximum boogie speed in follow-me mode (km/h)
     float min_dist_m; // minimum allowed distance to the foiler
     float followme_smoothing_band_m; // smoothing band above min distance
-    // Retired 2026-08-26: was foiler_low_speed_kmh. Keep this float in place so stored SW35
-    // configurations and field offsets remain binary-compatible; it is intentionally not exposed
-    // by ConfigService and no runtime path reads it.
-    float rsvd_f32_foiler_low_speed;
+    // V2.5-Evo - 2026-08-27 - RENAMED IN PLACE from the retired foiler_low_speed_kmh slot.
+    // Same float and offset: no layout change and no SW_VERSION bump. Existing configurations are
+    // recognised by steer_reduction_start_pct still containing its old reserved value and are
+    // promoted to the 35% default by cfgValidateCrossField() before normal range validation.
+    float steer_full_throttle_pct; // 20-100%. Steering authority retained at full effective throttle.
     // V2.5-Evo - 2026-07-20 - R6: comment block corrected. It previously described an
     // "engagement cone" gate that does not exist, marked all three params "CURRENTLY UNUSED"
     // (the FM geometry consumes all three), and gave the wrong mode numbers with the wrong
@@ -469,57 +472,10 @@ struct confStruct {
     uint16_t mag_orientation;          // 0 | 90 | 180 | 270 degrees
 
 
-    // ============================================================
-
-    // V2.5-Evo - 2026-08-16 - RESERVED SLOTS, banked deliberately.
-
-    //
-
-    // SW34 banked three of these and TWO have already paid for themselves without costing
-
-    // anyone a config reset: fm_steer_reposition_en became log_level (2026-07-25), and
-
-    // auton_runtime_cap_s became gps_dyn_model (2026-08-16). The pattern works, so since
-
-    // SW35 is spending a reset anyway, bank more now rather than charge riders again for
-
-    // the next small setting.
-
-    //
-
-    // RULES for reusing one - the same ones that made the last two free:
-
-    //   1. RENAME IN PLACE. Same offset, same type. Never insert, never reorder.
-
-    //   2. sizeof(confStruct) must not change, so the static_assert stays untouched.
-
-    //   3. SW_VERSION must NOT be bumped - that is the whole point.
-
-    //   4. 0 must remain a safe, behaviour-preserving default, because that is what every
-
-    //      board in the field already holds here.
-
-    //   5. Update the kCfgFields row and both web UIs in the same commit.
-
-    //
-
-    // WHAT THESE CANNOT DO: anything needing an ARRAY. Multi-TX needs a table of paired
-
-    // addresses, not a scalar, so it will need a real struct change and its own bump. These
-
-    // slots are for scalars - a threshold, a mode, an enable flag, a coefficient.
-
-    //
-
-    // Candidates already visible: magnetic declination (compass reads magnetic, GPS COG is
-
-    // true-referenced); a motor-EMI compass compensation coefficient; the autonomous-runtime
-
-    // cap that gps_dyn_model displaced; further GPS or FM tuning values.
-
-    // ============================================================
-
-    uint16_t rsvd_u16_1;               // RESERVED. 0 = unused. Rename in place; do NOT bump.
+    // V2.5-Evo - 2026-08-27 - RENAMED IN PLACE from rsvd_u16_1. Same uint16_t and offset,
+    // so sizeof(confStruct) remains 192 and SW_VERSION remains 35. Stored zero is the legacy
+    // marker used by cfgValidateCrossField() to initialise both steering settings to 50% / 35%.
+    uint16_t steer_reduction_start_pct; // 30-80%. Full authority at and below this effective throttle.
 
     // V2.5-Evo - 2026-08-27 - RENAMED IN PLACE: rsvd_f32_1 -> fm_diverge_dist_m.
     // Absolute distance ceiling for the sustained non-closing divergence detector. Runtime clamps
@@ -533,7 +489,7 @@ static_assert(sizeof(confStruct) == 192, "confStruct size mismatch — expected 
 confStruct usrConf;
   //The orginal confs were:  ##// confStruct defaultConf = {SW_VERSION, 1, 0, 0, 50, 0, 0, 1500, 2000, 1500, 2000, 1000, 10, 0, 1, 0, 0, 0, 0, 0, 25.0f, 10.0f, 10.0f, 5.0f, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0, 1000, 1, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}};
   // Factory default configuration.
-confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: conventional default (0-100)*/, 0 /*steering_inverted: 0 = conventional default; a fresh build MUST verify steering direction wheels-up (FM steers toward rider) before trusting FM.*/, 0, 1000, 2000, 1000, 2000, 1000, 10, 0, 1, 2, 2, 1, 2, 1, 25.0f, 10.0f, 10.0f, 8.0f /*retired foiler-low-speed slot; reserved for SW35 ABI*/, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0f, 3000, 0, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}, // wifi_password below: documented DEFAULT AP password "12345678" — change before use
+confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: conventional default (0-100)*/, 0 /*steering_inverted: 0 = conventional default; a fresh build MUST verify steering direction wheels-up (FM steers toward rider) before trusting FM.*/, 0, 1000, 2000, 1000, 2000, 1000, 10, 0, 1, 2, 2, 1, 2, 1, 25.0f, 10.0f, 10.0f, kSteerFullThrottleDefaultPct /*steer_full_throttle_pct*/, 35.0f, 45.0f, 45.0f, 0.0095554f, 0.0f, 3000, 0, 0, {0, 0, 0}, {0, 0, 0}, {'1','2','3','4','5','6','7','8'}, // wifi_password below: documented DEFAULT AP password "12345678" — change before use
   // V2.5-Evo - 2026-04-22 - Compass calibration fields (previously implicit zeros).
   // Made explicit here so gps_chip_type can follow. Safe neutral values:
   // offsets=0 (no bias), scales=1.0f (unity gain = no correction applied).
@@ -598,7 +554,7 @@ confStruct defaultConf = {SW_VERSION, 2, 22, 1, 50 /*steering_influence: convent
   // (Developer), which is the behaviour every unit already has, so nothing changes on flash.
   0,          // log_level: 0 = unset -> logs as level 3 (Developer). 1/2 accepted but currently log as 3; 4 = Deep.
   0,          // mag_orientation: 0 deg. Set by ?compasscal (north-to-north) or ?magalign.
-  0,            // rsvd_u16_1  RESERVED - 0 = unused
+  kSteerReductionStartDefaultPct, // steer_reduction_start_pct: full authority through 50% effective throttle
 
   100.0f        // fm_diverge_dist_m: absolute divergence ceiling; runtime min 2 x D_engage
 
