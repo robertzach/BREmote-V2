@@ -130,7 +130,7 @@ Future work: an I term can be added later without restructuring. The preset stru
 - **COG** — GPS Course Over Ground. Direction of motion derived from successive GPS positions.
 - **Heading error** — difference between desired bearing and current heading, in degrees, signed and wrapped to ±180°.
 - **Critical damping** — the Kd value that brings the buggy to target without overshoot or oscillation. The "sweet spot."
-- **Schmitt-trigger hysteresis** — using two thresholds (one for engaging, one for disengaging) to prevent flap-flap when input hovers near a single threshold. Used by `zone_angle_enter_deg` / `zone_angle_exit_deg` for FM.
+- **Schmitt-trigger hysteresis** — using two thresholds to prevent flap-flap near one boundary. `zone_angle_enter_deg` / `zone_angle_exit_deg` control the F1/F3 diagonal-offset choice and F4's advisory angle warning; they do not gate F4 engagement.
 - **Wind-up** (I-term) — integrator accumulating error during saturation, causing overshoot later.
 
 ## 8. References

@@ -25,8 +25,9 @@
 // P_MAG (GPIO 9) reads an UNDEFINED state without it, which would let the magnet gesture
 // mis-fire on hardware that was never meant to use it. Enable 1/2/3 per device via the web UI.
 // ============================================================
+// V2.5-Evo - 2026-08-27 - F4 angle is now advisory-only. fm_flags bit 4 reports the RX Schmitt warning; while armed with a healthy link the TX emits one short Pattern 5 pulse immediately and every 3 s until the warning clears. No struct/packet/config change; SW_VERSION stays 27.
 // V2.5-Evo - 2026-07-20 - Batch T (FM v1.4): TelemetryPacket index 16 reserved_tx_imu repurposed as fm_flags
-//   ([0]armed [1]engaged [2]armed-not-ready [3]fault-stop-sticky) + FM_FLAG_* / FM_LINK_HEALTHY_MS defines.
+//   ([0]armed [1]engaged [2]armed-not-ready [3]fault-stop-sticky; bit 4 added 2026-08-27) + FM_FLAG_* / FM_LINK_HEALTHY_MS defines.
 //   No struct size change (byte already present), no confStruct change — sizeof(confStruct) stays 136,
 //   SW_VERSION stays 27, static_assert intact, SPIFFS config NOT reset by this flash.
 // V2.5-Evo - 2026-05-13 - SW50: DISPLAY_MODE_AMP replaces INTBAT; TelemetryPacket +foil_motor_amps byte (index 6); link_quality→index 7
@@ -531,7 +532,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t fm_heading_err = 127;     // index 14 — bearing error+127; 127 = no data
     uint8_t fm_status = 0;            // index 15 — [7]=aux2_on [6]=aux1_on [5]=vesc_online [4]=rx_wetness [3:2]=heading_conf [1]=rtm_active [0]=fm_active
     uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state from the RX FM brain.
-                                      //   [0]=armed [1]=engaged [2]=armed-not-ready(RX: latch not proven) [3]=fault-stop(sticky 6s).
+                                      //   [0]=armed [1]=engaged [2]=armed-not-ready(RX) [3]=fault-stop(sticky 6s) [4]=F4-angle-warning.
                                       //   V2.5-Evo - 2026-07-20 - Batch T: repurposed the unused reserved_tx_imu byte (was 0xFF).
                                       //   Default 0 (not 0xFF) so that before any RX packet arrives no FM bit reads as set — matches
                                       //   the RX-side default. Written by the generic index-addressed telemetry unpack in Radio.ino.
@@ -548,6 +549,7 @@ struct __attribute__((packed)) TelemetryPacket {
 #define FM_FLAG_ENGAGED   0x02  // bit1: RX FM engaged (actively steering / capping)
 #define FM_FLAG_NOTREADY  0x04  // bit2: RX-side armed-not-ready (separation latch not yet proven)
 #define FM_FLAG_FAULT     0x08  // bit3: RX fault-stop, sticky 6s (already surprise-gated on the RX)
+#define FM_FLAG_ANGLE_WARN 0x10 // bit4: advisory F4 off-axis warning (never a control/disarm gate)
 // Link-health window: the TX treats the RX link as alive only while a packet has landed within
 // this many ms (matches the existing `millis()-last_packet < 1000` failsafe window used for the
 // bargraphs/vibration connectivity checks). Used by the FM readiness OR and the engaged gate.

@@ -512,6 +512,11 @@ bool isFmArmed() { return fm_armed; }
 // starts from a fresh baseline (no stale edge). RAM only.
 static uint8_t fm_flags_prev = 0;
 
+// F4 angle warning haptic. The RX owns the Schmitt state and exports it in fm_flags bit 4; the TX
+// only schedules a short advisory pulse while it is armed and receiving fresh telemetry.
+static const unsigned long kFmAngleWarningVibMs = 3000UL;
+static unsigned long fm_angle_warning_last_vib_ms = 0;
+
 // ============================================================
 // V2.5-Evo - 2026-07-20 - Batch T (Fable FM v1.4): FM arm-time and display readiness gating.
 // All inputs are TX-LOCAL (paired flag, own GPS fix/age, last-reply age) plus the RX's own
@@ -760,15 +765,34 @@ void runFmLoop()
   fm_flags_prev = fm_flags_now;
   if (fm_armed && fault_rising)
   {
-    // FAULT — and since the 2026-08-17 revision this is the ONLY FM path that buzzes. The RX
-    // faulted and stopped following by itself: the rider asked for nothing, no timer explains it,
-    // and he has no other way to learn the buggy is no longer steering for him. → commanded =
-  // false → Pattern 7. Trigger release itself never enters this path.
+    // FAULT — this is the only FM path that fires the LONG STOP buzz. The RX faulted and stopped
+    // following by itself: the rider asked for nothing, no timer explains it, and he has no other
+    // way to learn the buggy is no longer steering for him. → commanded = false → Pattern 7.
+    // Trigger release and the short advisory F4 angle pulse never enter this path.
     fmDisarm(false);   // clears fm_armed + keepalive, sends 0xF2/0, "St" + Pattern 7 — TX & RX can't disagree
     return;
   }
 
-  if (!fm_armed) return;
+  if (!fm_armed) {
+    fm_angle_warning_last_vib_ms = 0;
+    return;
+  }
+
+  // F4 angle is warning-only: one short pulse immediately, then every 3 s while the RX warning
+  // remains set. A stale link cannot perpetuate a warning from old telemetry. Fault-stop has
+  // already been handled above and always outranks this advisory; other active patterns finish
+  // first, after which the overdue warning is emitted without losing its period.
+  bool angle_warning = (last_fm_mode == 4) &&
+      (fm_flags_now & FM_FLAG_ANGLE_WARN) &&
+      last_packet != 0 && (now - last_packet) < FM_LINK_HEALTHY_MS;
+  if (!angle_warning) {
+    fm_angle_warning_last_vib_ms = 0;
+  } else if ((fm_angle_warning_last_vib_ms == 0 ||
+              (now - fm_angle_warning_last_vib_ms) >= kFmAngleWarningVibMs) &&
+             current_vib_pattern == 0 && !vib_stop_pending) {
+    current_vib_pattern = 5;  // one short 150 ms advisory pulse
+    fm_angle_warning_last_vib_ms = now;
+  }
 
   // Arm-window auto-disarm: if user never applied throttle since arming, disarm after fm_arm_window_s
   if (!fm_throttle_seen)

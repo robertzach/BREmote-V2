@@ -348,11 +348,12 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 > | **1** | **Near Right** | behind and to your right |
 > | **2** | **Behind** | directly behind you — **shipped default** |
 > | **3** | **Near Left** | behind and to your left |
-> | **4** | **In Front** | forward pacer — experimental; buggy must already be ahead |
+> | **4** | **In Front** | forward pacer — experimental; radial-distance engage |
 >
 > F4 accepts `boogie_vmax_in_followme_kmh=0`; this removes the absolute vehicle-speed ceiling but
 > keeps the rider-relative front-gap governor active. Start with a finite, low ceiling for controlled
-> validation whenever possible. F4 never performs an autonomous overtake.
+> validation whenever possible. F4's angle does not block engagement: outside the configured cone
+> the TX warns every 3 seconds, but the buggy may still steer from beside/behind toward the front.
 >
 > `0` disables FM steering entirely (RTM throttle-limit only). Set the side you want, then confirm it
 > on the TX display: **F1 / F2 / F3**.

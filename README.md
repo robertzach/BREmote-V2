@@ -611,7 +611,7 @@ any full-power run.
 
 > FM override is fully implemented in V2.5-Evo. It overrides the RX follow-me positioning mode at runtime without a SPIFFS write.
 
-> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0 / F1 / F2 / F3 / F4) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4 is an experimental forward pacer: it never overtakes autonomously and engages only after the buggy is already proven ahead. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
+> **⚠️ Follow-Me autonomous control IS implemented in this release (alpha).** The mode override display (F0 / F1 / F2 / F3 / F4) is fully functional — you cycle and set the mode on the TX display, and the buggy follows the rider per the selected geometry. F4 is an experimental forward pacer. Its engage proof is radial distance only, so it may steer from beside or behind the rider toward its forward target. **Alpha — bench/wheels-up test the steering direction before any in-water use.**
 
 The override is RAM-only — RX returns to its web-configured `followme_mode` on reboot.
 
@@ -630,13 +630,15 @@ The override is RAM-only — RX returns to its web-configured `followme_mode` on
 | `F1` | 1 | Near-Right — RX trails behind-right of the rider |
 | `F2` | 2 | Behind (default) — RX trails directly behind the rider |
 | `F3` | 3 | Near-Left — RX trails behind-left of the rider |
-| `F4` | 4 | In Front — RX acts as a forward pacer; it engages only after it is already ahead of the rider |
+| `F4` | 4 | In Front — RX acts as a forward pacer; engagement uses radial `D_engage` |
 
-For F4, `fm_engage_dist_m` is measured **along the rider's forward course**, not merely as radial
-distance. The buggy must remain inside the `zone_angle_enter_deg` front cone for 2 seconds. Losing
-the front position or crossing `zone_angle_exit_deg` stops F4 in HOLD, clears the latch and requires
-a fresh front proof. `boogie_vmax_in_followme_kmh=0` is allowed and removes the absolute vehicle-
-speed ceiling; F4's rider-relative front-gap governor remains active.
+For F4, `fm_engage_dist_m` is the same **radial** rider-to-buggy distance used by F1-F3. The
+along-course sign and angle do not block engagement, stop F4 or clear its separation proof. Crossing
+above `zone_angle_exit_deg` raises an advisory warning: the TX vibrates once immediately and every
+3 seconds while it persists; returning below `zone_angle_enter_deg` clears it. Because this permits
+F4 to engage while the buggy is beside or behind the rider, its route to the forward target may
+cross the rider's line. `boogie_vmax_in_followme_kmh=0` removes the absolute vehicle-speed ceiling;
+F4's rider-relative front-gap governor remains active.
 
 While FM is following, a deliberate manual steering input temporarily takes steering priority
 without cancelling FM; the FM throttle cap and separation proof remain active, and centring the
@@ -646,8 +648,8 @@ continuously for 2 seconds returns RX to manual ARMED, restores full manual thro
 squeeze and clears the proof while TX retains the selected mode. Fresh positions inside the effective
 engagement distance below 2 km/h for 2 seconds independently clear the proof. FM resumes only after
 its geometry, sensor gates and separation proof are valid again. Explicit F0/disarm remains the
-deterministic boundary before a new tow. Genuine faults and F4's physical loss of the front corridor
-keep their existing stop behavior.
+deterministic boundary before a new tow. Genuine GPS/link/heading/divergence faults keep their
+existing stop behavior; the F4 angle warning is not a fault or state transition.
 
 ### FM Proximity Warning
 

@@ -25,7 +25,7 @@ FM = autonomous steering + distance-based throttle limiting, under a human throt
 | 1 | **Near-Right** | behind-right diagonal at `near_diag_offset_deg` |
 | 2 | **Behind** (default) | directly behind rider's course |
 | 3 | **Near-Left** | behind-left diagonal |
-| 4 | **In Front** | forward pacer; engagement requires the buggy already ahead |
+| 4 | **In Front** | forward pacer; engagement uses radial `D_engage`, angle is advisory |
 
 This TX-side convention is canonical for ALL surfaces (TX display F0–F4, RX struct, both web UIs, README). Default = 2 (Behind).
 
@@ -56,7 +56,7 @@ While FM is ACTIVE, a manual steering deflection of at least 40 raw counts from 
 priority immediately at the 100 Hz PWM layer. FM remains ACTIVE, its separation proof and throttle
 cap remain in force, and centring the input returns steering to FM. Divergence timing is parked while
 manual steering has priority because the resulting path is rider-commanded, not FM convergence.
-F4's independent physical front-corridor loss remains a safety HOLD and clears its front proof.
+For F4, an off-axis position raises a periodic TX warning but does not change FM state or its proof.
 
 ## 5. Activation / hold conditions (ALL required while FM_ACTIVE, checked every loop)
 
@@ -87,10 +87,11 @@ Per control tick (10 Hz), all on RX:
 
 Mode 4 replaces the trailing point with a forward station at `d_follow`. Its steering point is a
 derived lookahead that is always kept ahead of the buggy, so excess lead can only be corrected by
-slowing down and never by a U-turn toward the rider. Engagement uses the signed along-course lead:
-`along_track > fm_engage_dist_m` inside the front-cone threshold for the existing 2 s dwell. Loss of
-course, lead or front cone clears the latch and holds the motor at zero; no autonomous overtake or
-automatic path across the rider exists.
+slowing down and never by a U-turn toward the rider. Engagement uses the same radial
+`distance > fm_engage_dist_m` proof and 2 s dwell as F1-F3; signed lead and off-axis angle are not
+control gates. Beyond `zone_angle_exit_deg`, telemetry bit 4 makes the TX vibrate once immediately
+and every 3 s until the angle returns below `zone_angle_enter_deg`. This is advisory only: F4 may
+engage beside or behind the rider and its path toward the forward station may cross the rider's line.
 
 ## 7. Throttle cap chain (subtract-only; lowest cap wins)
 
@@ -122,8 +123,8 @@ F4 reuses the existing FM parameters (no SW_VERSION bump):
 | `near_diag_offset_deg` | diagonal offset (modes 1/3) | 45° |
 | `boogie_vmax_in_followme_kmh` | FM absolute speed ceiling; 0 = no absolute ceiling (F4 gap governor remains active) | 25 km/h (~15.5 mph) |
 | `foiler_low_speed_kmh` | rider-down gate | 8 km/h (~5 mph) |
-| `zone_angle_enter_deg` / `zone_angle_exit_deg` | side-zone Schmitt pair | 35° / 45° |
-| `fm_engage_dist_m` | separation/front-proof distance; 0 = auto, otherwise 8–50 m; same effective threshold resets a set latch after 2 s below 2 km/h inside it | 0 (auto) |
+| `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-zone and F4 advisory-warning Schmitt pair | 35° / 45° |
+| `fm_engage_dist_m` | radial separation-proof distance for F1-F4; 0 = auto, otherwise 8–50 m; same effective threshold resets a set latch after 2 s below 2 km/h inside it | 0 (auto) |
 
 Field-retunable to 4/10/20 m equivalents without reflash. At the next SW_VERSION bump (whenever one happens for other reasons), bake the proven values into `defaultConf` on both sides — a version bump resets stored config to `defaultConf` (verified against `ConfigService`/`SPIFFSEngine`; web-UI-only tuning does not survive bumps).
 
@@ -139,8 +140,8 @@ Deferred to a future bump (one field, shared with RTM): an RX-side autonomous-ru
 | LoRa loss | > `failsafe_time` | PWM pulses stop immediately; FM fault/disarm when control resumes |
 | Rider inside stop radius | dist < `min_dist_m` | cap 0 until beyond band |
 | Rider down/slow | speed < `foiler_low_speed_kmh` | cap 0, wait |
-| Rider course invalid | speed < ~5 km/h | F1–F3 degrade to hold-station; F4 stops in HOLD and clears its front proof |
-| F4 no longer provably ahead/in front cone | signed lead / angle Schmitt fails | cap 0, HOLD, clear latch; fresh front proof required |
+| Rider course invalid | speed < ~5 km/h | F1–F3 degrade to hold-station; F4 stops in HOLD but preserves its radial separation proof |
+| F4 outside forward-angle cone | angle rises above exit threshold | advisory TX vibration immediately and every 3 s; no control/state change; clears below enter threshold |
 | RTM armed | 0xF2/0 silent disarm | FM off (existing) |
 | Trigger released | physical | motor stops immediately; a short release stays in HOLD with proof preserved, while 2 s continuously released returns RX to manual ARMED and clears the proof |
 | Rider stationary inside effective `D_engage` | radial distance < `D_engage` and filtered speed < 2 km/h for 2 s | clear latch; mode remains declared; fresh separation proof required |
@@ -150,7 +151,7 @@ Deferred to a future bump (one field, shared with RTM): an RX-side autonomous-ru
 
 ## 10. Test plan
 
-1. **Bench, motor off:** mode plumbing end-to-end; simulated coordinates through the target-point math; sign/offset verification against the Settings Visualizer; hysteresis boundaries; stationary-near latch reset requires fresh positions plus both thresholds continuously for 2 s; every §5 condition force-failed → cap 0.
+1. **Bench, motor off:** mode plumbing end-to-end; simulated coordinates through the target-point math; sign/offset verification against the Settings Visualizer; F4 beside/behind still latches on radial `D_engage`; F4 angle crossing changes only telemetry bit 4 and produces a short TX pulse every 3 s; stationary-near latch reset requires fresh positions plus both thresholds continuously for 2 s; every §5 control condition force-failed → cap 0.
 2. **Bench, wheels up:** cap chain order; engage ramp; align-phase cap; compass-under-load table (from Phase 0.5).
 3. **Controlled water, tethered:** mode 2 (Behind) only, walking-pace rider, hard-stop verification, GPS-denial stop.
 4. **Field, incremental:** mode 2 first at 6 m; then mode 1 (Near-Right); throttle hand ready to cut throughout; logging enabled (aux button) every run.

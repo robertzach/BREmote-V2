@@ -105,12 +105,14 @@ your direction of travel):
 | **F3** | **Near-Left** | behind and to your left |
 | **F4** | **In Front** | ahead of you as a forward pacer |
 
-F4 never performs an autonomous overtake. Position the buggy ahead manually first. It engages only
-after the along-course lead exceeds `fm_engage_dist_m`, stays inside the configured front cone and
-remains proven for 2 seconds. If it ceases to be provably ahead, it stops in HOLD, clears the proof
-and requires a fresh front proof. A brief trigger release does not clear a still-valid proof; keeping
-the trigger released for 2 seconds does. The general stationary-near reset can independently clear it
-after 2 seconds below 2 km/h inside the engagement radius.
+F4 uses the same radial `fm_engage_dist_m` separation proof as F1-F3. Its along-course sign and angle
+do not block engagement, stop F4 or clear the proof. If the angle grows above
+`zone_angle_exit_deg`, the remote gives one short vibration immediately and every 3 seconds while
+the warning remains; it clears below `zone_angle_enter_deg`. This is only a warning: when F4 engages
+with the buggy beside or behind you, it may steer across your line toward its forward target. A brief
+trigger release does not clear a still-valid proof; keeping the trigger released for 2 seconds does.
+The stationary-near reset can independently clear it after 2 seconds below 2 km/h inside the
+engagement radius.
 
 For F1/F3, the exact angle is set by **`near_diag_offset_deg`** — the number of degrees **off
 straight-behind**. Near-Right and Near-Left are mirror images of it; F4 does not use this offset:

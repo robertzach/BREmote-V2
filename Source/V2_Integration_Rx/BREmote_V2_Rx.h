@@ -9,7 +9,7 @@
 // V2.5-Evo - 2026-07-25 - A2: fm_engage_dist_m promoted from RESERVED/unread to LIVE — runFmLoop() now reads it as the FM engage distance in METRES (rope length x ~1.15), 0 = auto (unchanged legacy behaviour). Comment/semantics only: no field added, moved or resized; sizeof(confStruct) stays 184, static_assert unchanged, SW_VERSION stays 34, SPIFFS config is NOT reset by this flash.
 // V2.5-Evo - 2026-07-24 - F9: VescLogData +6 bytes (tx_distance_dx10, rssi_dbm, snr_dx10) for owner-requested distance + link-quality CSV columns; sizeof 53->59; old SPIFFS logs misparse after this flash; NO confStruct change, SW_VERSION stays 34
 // V2.5-Evo - 2026-07-20 - SW33->34 config bump + defaultConf bake: appended THREE reserved confStruct slots — fm_engage_dist_m (float, 0=auto), auton_runtime_cap_s (uint16_t, 0=disabled), fm_steer_reposition_en (uint16_t, 0=off). All three are default-off storage slots and are NOT read by v1 control law — bundled together so the v2 features that will read them need NO second config wipe. sizeof(confStruct) 176->184 (float+u16+u16, naturally aligned, no tail pad); static_assert updated to 184. defaultConf carries the factory default configuration (compass cal fields made explicit, neutral). Behavior-IDENTICAL control law — config-layer only, no FM/RTM logic change. SPIFFS config IS reset by this flash (struct size changed); this is the one intended config-wipe event.
-// V2.5-Evo - 2026-07-20 - FM control brain (Fable v1.4): repurposed the unused reserved_tx_imu telemetry byte (index 16) as fm_flags — the coherent FM engagement sub-state the TX display consumes ([0]armed [1]engaged [2]armed-not-ready [3]fault-stop-sticky). No confStruct change, no telemetry-packet size change (byte was already present) — SW_VERSION stays 33, sizeof(confStruct) stays 176, SPIFFS config is NOT reset by this flash.
+// V2.5-Evo - 2026-07-20 - FM control brain (Fable v1.4): repurposed the unused reserved_tx_imu telemetry byte (index 16) as fm_flags — the coherent FM engagement sub-state the TX display consumes ([0]armed [1]engaged [2]armed-not-ready [3]fault-stop-sticky; [4]F4-angle-warning added 2026-08-27). No confStruct change, no telemetry-packet size change (byte was already present) — SW_VERSION stays 33, sizeof(confStruct) stays 176, SPIFFS config is NOT reset by this flash.
 // V2.5-Evo - 2026-07-19 - P3 FM: added fm_rx_active + fm_throttle_cap runtime atomics for the Follow-Me state machine. No confStruct change (FM reuses the 8 existing FM params) — SW_VERSION stays 33, sizeof stays 176, SPIFFS config is NOT reset by this flash.
 // V2.5-Evo - 2026-07-20 - FM engagement semantics: added fm_mode_last_rx_ms atomic (0xF2 declaration age, drives the 95 s mode-age expiry); R6 comment cleanup on the zone_angle_enter/exit + near_diag_offset block (described a non-existent engagement cone, wrong mode numbers, inverted signs, false "CURRENTLY UNUSED"). No confStruct change — sizeof stays 176, SW_VERSION stays 33, SPIFFS config is NOT reset by this flash.
 // V2.5-Evo - 2026-07-19 - FM triage: log the steering byte actually applied by calcPWM() (g_effective_steer global + VescLogData.effective_steer_log); VescLogData sizeof 52→53; old SPIFFS logs misparse after this flash; no confStruct change, SW_VERSION unchanged
@@ -163,14 +163,14 @@ struct confStruct {
     // F1/F3: decides whether the buggy is lined up closely enough BEHIND the rider to apply the
     // diagonal side offset, or whether it should just sit directly behind. Measured from the
     // directly-behind axis; it is not an F1/F3 engagement gate.
-    // F4: reused as the front-cone gate. A front proof can latch/re-engage only below this angle
-    // from the rider's forward course.
+    // F4: advisory warning CLEAR threshold. Below this angle from the rider's forward course the
+    // periodic TX warning stops. It does not gate F4 engagement or continued operation.
     // Range: 0-180°. Default 35°.
     float zone_angle_enter_deg;
 
-    // FOLLOW-GEOMETRY SCHMITT — EXIT half-angle (degrees). F1/F3 drop the diagonal beyond it;
-    // F4 stops, enters HOLD and clears the front proof beyond it. MUST be > zone_angle_enter_deg
-    // by 5-15° so rider-course noise cannot flap either decision.
+    // FOLLOW-GEOMETRY SCHMITT — EXIT half-angle (degrees). F1/F3 drop the diagonal beyond it.
+    // F4 raises an advisory telemetry warning beyond it; the TX vibrates every 3 s while the
+    // warning remains. MUST be > zone_angle_enter_deg by 5-15° so noise cannot flap either use.
     // Range: 0-180°. Default 45°.
     float zone_angle_exit_deg;
 
@@ -1149,7 +1149,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t rx_heading = 0xFF;        // index 13 — GPS COG÷2 (0-179→0-358°); 0xFF = N/A
     uint8_t fm_heading_err = 127;     // index 14 — bearing error+127; 127 = no data
     uint8_t fm_status = 0;            // index 15 — [7]=aux2_on [6]=aux1_on [5]=vesc_online [4]=rx_wetness [3:2]=heading_conf [1]=rtm_active [0]=fm_active
-    uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state (assembled in RTMState.ino runRtmLoop): [3]=fault-stop-sticky [2]=armed-not-ready [1]=engaged [0]=armed. Was reserved_tx_imu (unused reserved byte).
+    uint8_t fm_flags = 0;             // index 16 — Follow-Me engagement sub-state (assembled in RTMState.ino runRtmLoop): [4]=F4-angle-warning [3]=fault-stop-sticky [2]=armed-not-ready [1]=engaged [0]=armed. Was reserved_tx_imu (unused reserved byte).
     uint8_t rx_bearing_to_tx = 0xFF;  // index 17 — bearing from buggy toward rider÷2; 0xFF = N/A
     uint8_t link_quality = 0;         // index 18 (must be last)
 } telemetry;

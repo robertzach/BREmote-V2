@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - Pattern 5 also carries the F4 advisory angle warning: one 150 ms pulse every 3 s while the RX warning persists. Stop requests still preempt it. No timing/config/struct version change.
 // V2.5-Evo - 2026-08-17 - StopBuzz FIX (vibrationTask): three delivery bugs in the haptics chain.
 //   1. Pattern 7 (STOP) could be silently lost — every executor branch ended with an unconditional
 //      current_vib_pattern = 0, wiping a stop queued while another pattern was mid-play (up to 4s
@@ -899,7 +900,7 @@ void checkCharger()
   setBrightness(0x0F);
 }
 
-volatile uint8_t current_vib_pattern = 0;  // active haptic pattern: 0=none, 1=2 short, 2=5 short, 3=5 long, 4=2 fast short (RTM/FM ARM confirm), 5=1 short (magnet 2s "release for FM" advisory), 6=3 fast short (magnet 5s "release for RTM" advisory), 7=1 long (UNCOMMANDED RTM/FM stop, or an arm refusal — request it via vib_stop_pending, never by writing 7 here)
+volatile uint8_t current_vib_pattern = 0;  // active haptic pattern: 0=none, 1=2 short, 2=5 short, 3=5 long, 4=2 fast short (RTM/FM ARM confirm), 5=1 short (magnet 2s or periodic F4-angle advisory), 6=3 fast short (magnet 5s "release for RTM" advisory), 7=1 long (UNCOMMANDED RTM/FM stop, or an arm refusal — request it via vib_stop_pending, never by writing 7 here)
 
 // ============================================================
 // STOP-BUZZ REQUEST FLAG - how Pattern 7 gets to actually play
@@ -1058,7 +1059,8 @@ void vibrationTask(void *parameter) {
       if (current_vib_pattern == 4) current_vib_pattern = 0;
     }
     // V2.5-Evo - 2026-07-20 - MagGesture: Pattern 5 — ONE short pulse.
-    // Used only as the magnet-gesture 2s advisory ("release the magnet now and FM will arm").
+    // Used as the magnet-gesture 2s advisory ("release the magnet now and FM will arm") and,
+    // since 2026-08-27, as F4's periodic advisory that the buggy is outside the forward angle.
     // Deliberately a single pulse so it cannot be confused by feel with Pattern 4 (two pulses),
     // which is the 5s RTM advisory and every arm/disarm confirm. 150ms matches the "short"
     // pulse length already used by Patterns A and B.
