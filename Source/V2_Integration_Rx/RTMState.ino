@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F4 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
 // V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival below effective D_engage and a moving-rider cancellation preserve the live F1-F4 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
 // V2.5-Evo - 2026-08-26 - FM_RETURN replaces the separately armed RTM product mode. Any live F1-F4 declaration can enter FM_RETURN after fresh/plausible TX+RX positions show the foiler below 2 km/h and radially beyond effective D_engage for 2 s, including stationary arming before a tow. FM_RETURN holds still for that proof dwell, then uses the shared direct-to-rider RTM steering/align/speed-governor control under the unchanged trigger deadman. [SUPERSEDED 2026-08-27: normal RETURN exits now preserve the declaration and enter FM_ARMED as described above; the completion-bit/IDLE handshake was removed.]
@@ -61,7 +62,7 @@ extern void          updateCompassSnapshot();   // From Compass.ino (D2) — cap
 // ============================================================
 // RTM/FM STEERING CONTROLLER PRESETS — Bundle 1 (2026-05-08)
 //
-// PID-style controller: output = Kp * clamped_error - Kd * d(error)/dt
+// PD-style controller: output = Kp * clamped_error + Kd * d(error)/dt
 // Plus a low-pass filter on TARGET POSITION (lat/lng) for FM path-following
 // — surfer's high-frequency bottom turns are smoothed out, buggy follows
 // the surfer's path rather than chasing every wobble.
@@ -1682,7 +1683,9 @@ static void updateFmSteering()
   // Confidence: LOW conf reduces total authority by 50% (preserves D5 behavior)
   float authority = (confidence == 1) ? 0.5f : 1.0f;
 
-  float output = 127.0f + authority * (p_term - d_term);
+  // d_error is the derivative of the same signed error used by P. Adding it provides damping:
+  // while a corrective turn closes the error, d_error is negative and reduces the command.
+  float output = 127.0f + authority * (p_term + d_term);
   if (output < 0.0f)   output = 0.0f;
   if (output > 254.0f) output = 254.0f;
   rtm_steer_override = (uint8_t)output;
