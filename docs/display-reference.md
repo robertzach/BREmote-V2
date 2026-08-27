@@ -66,19 +66,20 @@ Releasing the magnet while `BT_DOT_FAST` → returns to `BT_DOT_OFF`. Short hold
 |---|---|---|
 | LEFT tap | Record tap (starts 3s combo window) | Sets up combo |
 | RIGHT tap | Record tap (starts 3s combo window) | Sets up combo |
-| LEFT hold 2s | Cycle telemetry display mode | Simple hold, no combo required |
-| RIGHT hold 2s | Reserved — no action | Was: cycle display |
-| RIGHT tap → LEFT hold 5s | Arm RTM (Return-to-Me) | Requires gps_en=1 and rtm_enabled=1 |
+| LEFT hold 2s | Lock remote; if FM armed + trigger released: previous F1–F6 mode every 2s | Armed selector skips F0 |
+| RIGHT hold 2s | Cycle telemetry display; if FM armed + trigger released: next F1–F6 mode every 2s | Armed selector skips F0 |
+| RIGHT tap → LEFT hold | No autonomous action | Standalone RTM gesture retired |
 | LEFT tap → RIGHT hold (`fm_hold_duration_s`) | Cycle FM mode (F0→F1→F2→F3→F4→F5→F6) | Requires gps_en=1 and fm_override_enabled=1 |
 | Boot: hold RIGHT | Pairing mode | RIGHT toggle held at boot (no throttle) enters pairing; RIGHT + throttle = wipe SPIFFS |
 | Boot: hold LEFT | Calibration mode | LEFT toggle held at boot (no throttle) starts calibration; LEFT + throttle = force BLE session |
 
 **Notes:**
-- Lock feature removed in P8. System always boots unlocked.
-- Throttle must be at 0 for long-press actions to fire.
+- Lock is available when `no_lock=0`; the armed FM LEFT hold takes precedence while FM is armed.
+- Throttle must be at 0 for long-press actions to fire. Return the toggle to centre briefly after releasing it so the steering block can clear.
+- Armed LEFT/RIGHT selection sends every step immediately and wraps only through F1–F6. F0 remains an explicit combo-disarm action.
 - Tap window: 3s (`COMBO_WINDOW_MS`). Tap must occur before the hold begins.
 
-## Display Modes (LEFT toggle hold 2s cycles through)
+## Display Modes (RIGHT toggle hold 2s cycles through while FM is disarmed)
 
 Cycle is `DISPLAY_MODE_COUNT = 7`. Modes with unavailable data (sentinel `0xFF`) are skipped automatically — `cycleDisplayMode()` loops until it finds an available mode.
 
@@ -161,10 +162,10 @@ Source font: `docs/Dot_Matrix_Display_10x7_Render.html` — canonical pixel layo
 |---|---|---|
 | *(removed)* `A rM` | — | Arm confirm replaced by unlock animation + `rn` 2s blink (removed in P9 Bug4) |
 | `St` | large-font `displayDigits(LET_S, LET_T)` — not compact font | RTM disengages (any exit path) or pre-arm rejected |
-| `F0` – `F6` | large `LET_F` + mode digit | FM mode cycled or FM arm confirmed |
+| `F0` – `F6` | large `LET_F` + mode digit | FM arm/combo confirmation or armed LEFT/RIGHT mode selection |
 | `E 7` | E(3) + space(1) + 7(3) = 7 columns | Water ingress error code E71 (display shows "E 7" — the "1" does not fit; blinks 250ms on/off, non-blocking) |
 
-RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). FM confirmations similarly use `displayDigits(LET_F, mode)` for F0–F6. `showFullScreenMessage()` remains in use for `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
+RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). FM combo confirmations use `displayDigits(LET_F, mode)` for F0–F6; armed LEFT/RIGHT selection uses the same digits but leaves them visible until release or the next 2-second step. `showFullScreenMessage()` remains in use for `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
 
 ## R5 Proximity Bar (P9 New)
 Row R5 (`displayBuffer[6]`) is used as a proximity bar during RTM or FM.
@@ -197,7 +198,7 @@ Blink pattern: 1000 ms on / 500 ms off.
 |---|---|
 | rn | RTM armed — blinks during arm window; static 2s after arm confirmed |
 | St | RTM disengaged or pre-arm rejected — large-font `displayDigits(LET_S, LET_T)`, 2s |
-| F0 / F1 / F2 / F3 / F4 / F5 / F6 | FM mode confirmed — large-font 2s flash |
+| F0 / F1 / F2 / F3 / F4 / F5 / F6 | FM mode confirmed; armed hold selection remains visible until release/next step |
 | -- | ET error or no-data — auto-clears after 3s |
 
 ## Error Codes (TX dot display)

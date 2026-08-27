@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - Armed FM mode selection is now bidirectional hold-to-repeat. With the trigger released, LEFT/RIGHT hold steps backward/forward through F1-F6 after 2 s and every 2 s thereafter; F0 is excluded. Short presses keep their existing gear/cap/display behaviour, combo gestures retain priority, and the hold loop keeps GPS parsing plus FM fault handling alive. No config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-17 - StopBuzz FIX: fmDisarm() takes a `commanded` flag; the magnet toggle's two
 //   disarm paths pass "commanded" (silent) because removing the magnet IS the rider asking. The
 //   magnet ADVISORY buzzes (Patterns 5 and 6) are unchanged. The 2026-07-20 tag below is a dated
@@ -263,9 +264,11 @@ bool ctminus()
 // Combo = opposite tap within COMBO_WINDOW_MS followed by a long hold.
 //
 // Gesture map:
-//   RIGHT hold 2s (simple)             → cycle telemetry display mode
-//   LEFT hold 2s (simple)              → lock remote (unlock: left hold + throttle touch)
-//   LEFT tap → RIGHT hold 5s (combo)   → FM mode cycle (F1/F2/F3/F4/F5/F6/F0)
+//   FM disarmed: RIGHT hold 2s         → cycle telemetry display mode
+//   FM disarmed: LEFT hold 2s          → lock remote (unlock: left hold + throttle touch)
+//   FM armed + trigger released:
+//     LEFT / RIGHT hold                → previous / next F1-F6 mode after 2s, repeat every 2s
+//   LEFT tap → RIGHT hold (combo)      → FM mode cycle/disarm (duration = fm_hold_duration_s)
 //   RIGHT tap → LEFT hold              → no autonomous action (standalone RTM retired)
 // ============================================================
 static int           last_tap_dir   = 0;    // last recorded tap direction: +1=right, -1=left, 0=none
@@ -275,6 +278,29 @@ static const unsigned long COMBO_WINDOW_MS  = 3000UL;  // max gap between tap an
 // a tap without needing sub-100ms precision. A slightly-long tap may also adjust gear/cap
 // (side effect) but still primes the combo correctly.
 static const unsigned long COMBO_TAP_MAX_MS = 1000UL;
+
+// Preserve the ordinary short-toggle action when an armed FM press is released before the
+// two-second mode threshold. The action is delayed until release in that one context, which avoids
+// changing a gear/cap as a side effect of an intentional FM mode hold.
+static void applySimpleToggleAction(int direction)
+{
+  switch (usrConf.throttle_mode)
+  {
+    case 0: // Gears
+    default:
+      if (direction < 0 && gear > 0) gear--;
+      else if (direction > 0 && gear < usrConf.max_gears - 1) gear++;
+      showNewGear();
+      break;
+    case 1: // No gears — cycle display
+      cycleDisplayMode(direction);
+      break;
+    case 2: // Dynamic cap
+      throttleAdjustCap(direction);
+      showCapPercent();
+      break;
+  }
+}
 
 // direction: -1 = left toggle press, +1 = right toggle press
 void handleGearToggle(int direction)
@@ -311,6 +337,80 @@ void handleGearToggle(int direction)
   else
     long_press_ms = 2000UL;
 
+  // While FM is armed, both simple hold directions are reserved for mode selection. Selection is
+  // allowed only with the trigger released; with throttle applied calcFilter() routes the same
+  // physical toggle to steering and this handler is not entered. F0 is absent from the step helper,
+  // so holding a direction can never disarm Follow-Me accidentally.
+  if (!has_combo && isFmArmed())
+  {
+    static const unsigned long kFmModeRepeatMs = 2000UL;
+    unsigned long next_mode_ms = pushtime + kFmModeRepeatMs;
+    unsigned long last_fm_service_ms = pushtime;
+    bool mode_changed = false;
+    bool throttle_abort = false;
+
+    while (isActive() && isFmArmed())
+    {
+      while (Serial1.available()) gps_tx.encode(Serial1.read());
+      delay(10);
+
+      if (!isActive()) break;
+
+      // A squeeze immediately abandons selection. The next calcFilter() pass returns the toggle to
+      // its steering role; no pending mode step is allowed to fire after throttle has risen.
+      if (thr_scaled >= 10)
+      {
+        throttle_abort = true;
+        break;
+      }
+
+      unsigned long now = millis();
+      if (now - last_fm_service_ms >= 100UL)
+      {
+        runFmLoop();  // keep RX fault/disarm ownership live during an arbitrarily long hold
+        last_fm_service_ms = now;
+        if (!isFmArmed()) break;
+      }
+
+      if ((int32_t)(now - next_mode_ms) >= 0)
+      {
+        cycleFmModeArmed(direction);
+        mode_changed = true;
+        last_tap_dir = 0;
+        next_mode_ms += kFmModeRepeatMs;
+        // Do not burst through missed steps if another loop service ever takes longer than 2 s.
+        if ((int32_t)(now - next_mode_ms) >= 0) next_mode_ms = now + kFmModeRepeatMs;
+      }
+    }
+
+    unsigned long held_ms = millis() - pushtime;
+    bool short_action = isFmArmed() && !mode_changed && !throttle_abort &&
+                        held_ms > usrConf.gear_change_waittime;
+    if (short_action)
+    {
+      applySimpleToggleAction(direction);
+    }
+
+    if (isFmArmed() && !mode_changed && !throttle_abort && held_ms < COMBO_TAP_MAX_MS)
+    {
+      last_tap_dir = direction;
+      last_tap_ms  = millis();
+    }
+
+    if (short_action)
+    {
+      unsigned long action_ms = millis();
+      delay(50);
+      while (millis() - action_ms < usrConf.gear_display_time)
+      {
+        runMenu();
+        delay(10);
+      }
+    }
+    in_menu = usrConf.menu_timeout;
+    return;
+  }
+
   while (isActive())
   {
     delay(10);
@@ -330,19 +430,14 @@ void handleGearToggle(int direction)
         }
         else if (direction > 0)
         {
-          // Simple RIGHT hold 2s → cycle telemetry display mode
+          // FM-armed simple holds were intercepted above. Otherwise RIGHT hold cycles telemetry.
           cycleDisplayMode(1);
         }
         else if (direction < 0)
         {
-          if (isFmArmed())
+          // FM-armed simple holds were intercepted above. Otherwise LEFT hold retains lock.
+          if (!usrConf.no_lock)
           {
-            // FM armed: LEFT hold 2s → cycle FM mode (stays armed)
-            cycleFmModeArmed();
-          }
-          else if (!usrConf.no_lock)
-          {
-            // FM not armed: LEFT hold 2s → lock remote
             system_locked = 1;
             DISP_LOCK(); displayLock(); DISP_UNLOCK();
           }
@@ -359,22 +454,7 @@ void handleGearToggle(int direction)
     {
       if (change_once)
       {
-        switch (usrConf.throttle_mode)
-        {
-          case 0: // Gears
-          default:
-            if (direction < 0 && gear > 0) gear--;
-            else if (direction > 0 && gear < usrConf.max_gears - 1) gear++;
-            showNewGear();
-            break;
-          case 1: // No gears — cycle display
-            cycleDisplayMode(direction);
-            break;
-          case 2: // Dynamic cap
-            throttleAdjustCap(direction);
-            showCapPercent();
-            break;
-        }
+        applySimpleToggleAction(direction);
         change_once = 0;
         in_menu = usrConf.menu_timeout;
       }

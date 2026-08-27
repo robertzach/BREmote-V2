@@ -17,6 +17,20 @@ int main()
   assert(followMeIsFrontMode(6));
   assert(!followMeIsFrontMode(7));
 
+  assert(followMeStepActiveMode(1, -1) == 6);
+  assert(followMeStepActiveMode(2, -1) == 1);
+  assert(followMeStepActiveMode(5, +1) == 6);
+  assert(followMeStepActiveMode(6, +1) == 1);
+  assert(followMeStepActiveMode(4, 0) == 4);
+  assert(followMeStepActiveMode(0, +1) == 1);
+
+  uint8_t repeated = 1;
+  for (int i = 0; i < 12; ++i) {
+    repeated = followMeStepActiveMode(repeated, +1);
+    assert(followMeIsActiveMode(repeated));
+  }
+  assert(repeated == 1);  // two complete F1-F6 loops, never F0
+
   const float radius = 20.0f;
   const float diagonal = 45.0f;
   const float component = 14.142136f;

@@ -1,18 +1,13 @@
 #pragma once
 
 #include <math.h>
-#include <stdint.h>
+#include "FollowMeModes.h"
 
 struct FollowMeFrontStation {
   float offset_deg;
   float along_m;
   float cross_m;
 };
-
-static inline bool followMeIsFrontMode(uint8_t mode)
-{
-  return mode >= 4 && mode <= 6;
-}
 
 // Bearings increase clockwise: rider-left is negative, rider-right positive. The stored diagonal
 // field remains backwards-compatible through 180 degrees for the rear modes, but front use is

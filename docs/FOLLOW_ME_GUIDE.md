@@ -60,6 +60,17 @@ While floating, before takeoff:
 > The toggle **cannot arm once you're on the throttle** — while you hold the trigger, the
 > toggle *is* your steering. That's what the magnet is for.
 
+Once FM is armed, you can still change its mode during the tow without disarming it:
+
+1. Release the trigger and let the toggle return to centre briefly.
+2. Hold **LEFT** to step backward or **RIGHT** to step forward through F1–F6.
+3. The first change occurs after **2 seconds**; keep holding to change again every **2 seconds**.
+4. Pull the trigger again to continue with the newly displayed mode.
+
+This selector wraps F1↔F6 and never selects F0 accidentally. Explicit disarm stays on the existing
+LEFT-tap → RIGHT-hold combo. Each selected mode is sent to RX immediately; RX resets the controller
+edge and uses its normal engage ramp before restoring power.
+
 ### 3b. The magnet (works during the tow)
 
 If your remote has the Hall sensor fitted and `mag_mode` is set:

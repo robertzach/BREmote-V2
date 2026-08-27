@@ -404,10 +404,14 @@ Unavailable modes (no VESC lock or no GPS fix) are skipped automatically. `MA` r
 | Boot + hold RIGHT toggle | Pairing mode |
 | Boot + THR + LEFT toggle | Force BLE for session — activates BLE regardless of `bt_enabled` setting; display shows `bt`; persists until reboot |
 | Boot + THR + RIGHT toggle | Delete SPIFFS config (factory reset) |
-| LEFT hold 2 s | Lock the Remote |
-| RIGHT hold 2 s | Cycle telemetry display mode |
+| LEFT hold 2 s | Lock the Remote; while FM is armed and the trigger is released: previous F1–F6 mode, repeating every 2 s |
+| RIGHT hold 2 s | Cycle telemetry display mode; while FM is armed and the trigger is released: next F1–F6 mode, repeating every 2 s |
 | RIGHT tap → LEFT hold | No autonomous action (former RTM gesture retired) |
 | LEFT tap → RIGHT hold (default 3 s, tunable 3–10 s) | Cycle **Follow-Me** override mode (F0–F6) |
+
+The armed LEFT/RIGHT selector wraps only through F1–F6; it never lands on F0. Release the trigger,
+wait briefly for the steering-toggle block to clear, then hold the desired direction. F0/disarm
+remains on the deliberate combo gesture.
 
 > 💡 **Optional — magnet / Hall input for hands-free control.** A DRV5032 Hall sensor on GPIO 9 (P_MAG) lets a magnet gesture activate **BLE** and arm **Follow-Me** without reaching for the toggles (great mid-ride). Wiring + firmware: **[Hall Sensor Expansion guide →](docs/Hall_Sensor_Expansion.md)** · step-by-step fitting (incl. easier-to-solder parts): **[install tutorial →](docs/Hall_Sensor_Install_Tutorial.md)**.
 
@@ -515,10 +519,14 @@ The override is RAM-only. After a reboot, the TX seeds the next arm from its con
 
 ### Activation
 
-1. **Combo gesture:** Quick-tap LEFT toggle, then within 3 seconds hold RIGHT toggle for the hold duration (`fm_hold_duration_s`, default 3 s, tunable 3–10 s)
-2. TX display shows `F` + mode number (`F0`–`F6`)
-3. Continue holding RIGHT or re-hold within 2 s to keep cycling modes
-4. Release and wait 2 s — TX sends the selected mode to RX via 0xF2 meta-packet
+1. **Combo gesture:** Quick-tap LEFT toggle, then within 3 seconds hold RIGHT toggle for the hold duration (`fm_hold_duration_s`, default 3 s, tunable 3–10 s).
+2. TX arms at the configured/last mode and shows `F` + mode number (`F1`–`F6`).
+3. To change mode while FM remains armed, release the trigger and let the toggle return to centre briefly.
+4. Hold LEFT for the previous mode or RIGHT for the next. The first step occurs after 2 seconds and repeats every 2 seconds while held. Each step is sent immediately to RX.
+
+The armed selector wraps F1↔F6 and deliberately skips F0. Use the existing combo gesture for an
+explicit F0/disarm. When the trigger is pulled again, RX applies the new station through its safe
+controller reset and engage ramp.
 
 ### Modes
 

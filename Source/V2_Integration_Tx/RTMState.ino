@@ -1,8 +1,9 @@
-// V2.5-Evo - 2026-08-26 - FM trigger release no longer disarms the TX. Once the rider has applied throttle, the selected 0xF2 mode declaration and its 30 s keepalive persist until explicit FM/F0 disarm, RTM preemption, an RX-reported fault or declaration loss. The existing fm_arm_window_s timeout still applies before the first throttle input. No config/packet/struct change; SW_VERSION stays 27.
+// V2.5-Evo - 2026-08-28 - While FM is armed and the trigger is released, LEFT/RIGHT hold now steps backwards/forwards through F1-F6 after 2 s and repeats every 2 s. F0 is excluded from this selector and remains an explicit combo-disarm action. Each step is transmitted immediately; no config, packet or SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Follow-Me front family expanded to F4 Front-Left, F5 Front and F6 Front-Right. Both gesture cycles, starting-mode validation and display/meta declarations accept 1-6. The existing 0xF2 byte carries the values unchanged, so there is no packet or confStruct change and SW_VERSION stays 27.
+// V2.5-Evo - 2026-08-26 - FM trigger release no longer disarms the TX. Once the rider has applied throttle, the selected 0xF2 mode declaration and its 30 s keepalive persist until explicit FM/F0 disarm, RTM preemption, an RX-reported fault or declaration loss. The existing fm_arm_window_s timeout still applies before the first throttle input. No config/packet/struct change; SW_VERSION stays 27.
 // V2.5-Evo - 2026-04-25 - P7: TX RTM and FM state machines.
 // RTM: left-hold gesture → arm → squeeze(s) → active → cooldown → idle
-// FM:  right-hold gesture → cycle FM mode 0→1→2→3→4→5→6→0 → send 0xF2 meta-packet
+// FM: combo arms/disarms; while armed, released-trigger LEFT/RIGHT holds select F1-F6
 // V2.5-Evo - 2026-04-27 - P8: setRtmArmed shows "rn" ×2 (static, 3s total); showFmMode shows F0-F3;
 //   added setRtmDisarmed(); steer-exit gate in ACTIVE; rtm_max_runtime_s=0 disables runtime gate
 // V2.5-Evo - 2026-04-27 - fix: extern declaration for current_vib_pattern (defined in System.ino)
@@ -43,7 +44,8 @@
 // V2.5-Evo - 2026-07-20 - StopFeel: every STOP/DISARM confirm now fires Pattern 7 (one 400ms long pulse)
 //   instead of Pattern 4 (two 80ms taps), so arm and disarm feel different by touch. Changed sites:
 //   rtmDisengage() (RTM disengage), fmDisarm() (FM disarm), the runDoubleSqueezeArm() pre-arm "St"
-//   rejection, and both F0-disarm paths (cycleFmMode / cycleFmModeArmed). ARM confirms are UNCHANGED and
+//   rejection, and both F0-disarm paths (cycleFmMode / cycleFmModeArmed). [SUPERSEDED 2026-08-28:
+//   cycleFmModeArmed now skips F0; only the combo-owned cycleFmMode path can select it.] ARM confirms are UNCHANGED and
 //   stay Pattern 4: setRtmArmed(), the two runDoubleSqueezeArm() squeeze confirms, and the cycleFmMode()
 //   arm path. fmSilentDisarm() stays silent (arm-window expiry is not a commanded stop).
 // V2.5-Evo - 2026-08-17 - StopBuzz FIX: the 2026-08-16 haptic cut was applied inside rtmDisengage()
@@ -96,8 +98,9 @@ static void gpsKeepAliveDelay(uint32_t ms)
 //   - Blinks "F[mode]" x2 on display; fires Pattern 4 (2 fast buzzes) as arm confirm
 //   - FM active: user engages throttle to ride
 //
-// CHANGE MODE while armed (LEFT hold 2s, intercepted by Hall.ino):
-//   - Cycles F0→F1→F2→F3→F4→F5→F6→F0; stays armed; sends new mode to RX; resets arm timer
+// CHANGE MODE while armed and trigger released (intercepted by Hall.ino):
+//   - LEFT hold steps backwards, RIGHT hold forwards through F1-F6 after 2 s and every 2 s after.
+//   - F0 is excluded; explicit disarm remains on the existing combo gesture.
 //
 // DISARM (any of):
 //   - Same combo again (LEFT tap + RIGHT hold 5s) — toggle
@@ -113,7 +116,7 @@ static uint8_t       last_fm_mode     = 1;      // last active FM mode (1-6); de
 static unsigned long fm_arm_ms        = 0;      // time of arm; used only until first throttle input
 static bool          fm_throttle_seen = false;  // becomes true once thr_scaled>10 after arming
 
-// Returns true if FM is currently armed; called by Hall.ino to intercept LEFT hold 2s
+// Returns true if FM is currently armed; Hall.ino uses it to intercept both simple hold directions.
 bool isFmArmed() { return fm_armed; }
 
 // V2.5-Evo - 2026-07-20 - Batch T: previous telemetry.fm_flags snapshot for bit3 (fault-stop)
@@ -327,51 +330,22 @@ void cycleFmMode()
   queueMetaPacketBurst(0xF2, last_fm_mode);
 }
 
-// Called by handleGearToggle(-1) simple LEFT hold 2s when FM is armed (Hall.ino checks isFmArmed()).
-// Cycles mode 1→2→3→4→5→6→0 (0 disables FM); stays armed for modes 1-6 and resets arm timer.
-void cycleFmModeArmed()
+// Called by Hall.ino once per 2-second hold interval while FM is armed and the trigger is released.
+// LEFT/negative steps backwards and RIGHT/positive forwards. Only F1-F6 participate: F0 is an
+// explicit disarm command and cannot be reached accidentally by holding a direction.
+void cycleFmModeArmed(int direction)
 {
-  if (!fm_armed) return;
-  // Cycle 1→2→3→4→5→6→0 where 0 = disarm (FM disabled RAM-only state for hand-off).
-  last_fm_mode = (last_fm_mode < 6) ? last_fm_mode + 1 : 0;
+  if (!fm_armed || direction == 0) return;
+  last_fm_mode = followMeStepActiveMode(last_fm_mode, direction);
 
-  if (last_fm_mode == 0)
-  {
-    // F0: FM disabled — disarm with brief visual confirm and return to normal display.
-    // Sends 0xF2/0 to RX (FM off) and resets mode to SPIFFS default. No buzz — selecting F0 is a
-    // deliberate disarm the rider is watching happen on the display (comment corrected 2026-08-17:
-    // it said "fires Pattern 4", which stopped being true with the 08-16 cut).
-    // This is RAM-only; power cycle restores usrConf.followme_mode.
-    // V2.5-Evo - 2026-08-16 - HAPTIC CUT: no buzz on a mode CYCLE. You are actively
-
-    // pressing through modes and watching the display change; the arm buzz already fired
-
-    // once when you armed. Repeating it per mode is what made the patterns unreadable.
-
-    // Large-font F0 disarm confirm: LET_F + 0. Shorter hold (1s) — this is a disarm, not a mode select.
-    DISP_LOCK();
-    displayDigits(LET_F, 0);
-    updateDisplay();
-    DISP_UNLOCK();
-    gpsKeepAliveDelay(1000);
-    queueMetaPacketBurst(0xF2, 0);       // tell RX: FM disabled
-    fm_armed         = false;
-    fm_throttle_seen = false;
-    fm_last_sync_ms  = 0;
-    // Reset mode to SPIFFS default so next arm starts at configured mode, not 0
-    last_fm_mode = (usrConf.followme_mode >= 1 && usrConf.followme_mode <= 6)
-                   ? usrConf.followme_mode : 1;
-    return;
-  }
-
-  // Large-font mode confirm: LET_F + mode digit (1-6). snprintf no longer needed.
+  // Publish before returning to the hold loop, so the RX begins its safe mode-transfer ramp without
+  // waiting for the rider to release the toggle or for another two-second repeat interval.
   DISP_LOCK();
   displayDigits(LET_F, last_fm_mode);
   updateDisplay();
   DISP_UNLOCK();
-  gpsKeepAliveDelay(2000);
   queueMetaPacketBurst(0xF2, last_fm_mode);
-  fm_last_sync_ms = millis();              // reset keepalive — just synced
+  fm_last_sync_ms = millis();             // reset keepalive — just synced
   fm_arm_ms       = millis();             // reset arm window — user is actively choosing a mode
 }
 

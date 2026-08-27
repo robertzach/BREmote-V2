@@ -81,6 +81,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/FollowMeModes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -306,7 +307,7 @@ struct confStruct {
     uint16_t rtm_disengage_distance_m; // Distance from TX at which RTM disengages (hard stop); 3-20 m; default 10
     uint16_t rtm_max_runtime_s;        // Maximum continuous RTM runtime; 30-300 s; default 120
     uint16_t rtm_gps_timeout_ms;       // TX GPS loss timeout before safety stop; 500-3000 ms; default 2000
-    uint16_t fm_hold_duration_s;       // RIGHT hold time for FM mode cycle; 3-10 s (floor lowered 4→3 2026-07-20); default 5
+    uint16_t fm_hold_duration_s;       // LEFT-tap -> RIGHT-hold combo duration, 3-10 s; armed LEFT/RIGHT repeat stays fixed at 2 s
     uint16_t fm_override_enabled;      // Allow TX to override RX follow-me mode; 0=off, 1=on; default 1
 
     // ============================================================

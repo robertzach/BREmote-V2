@@ -53,7 +53,7 @@ bool txGpsGoodFix();
 // Follow-Me state machine (FM_RETURN now provides direct return; standalone RTM is retired)
 void runFmLoop();
 void cycleFmMode();
-void cycleFmModeArmed();
+void cycleFmModeArmed(int direction);
 bool isFmArmed();
 // V2.5-Evo - 2026-07-20 - Batch T: FM readiness helpers (defined in RTMState.ino, called from Display.ino).
 bool fmArmedNotReady();     // true when FM is armed but not READY → scanner blinks in place instead of sweeping
