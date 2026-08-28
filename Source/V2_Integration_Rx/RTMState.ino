@@ -1,5 +1,6 @@
+// V2.5-Evo - 2026-08-28 - The speed governor now publishes through a separate exposed-cap state: overspeed and any other requested reduction still land immediately, but authority can return only on fresh GPS-speed samples at kFmSpeedCapRisePerS. The old post-slew overspeed clamp could output 0 while its hidden PI cap remained near 255, then reveal that stale value in one tick when overspeed cleared; field data measured 0->201 in 335 ms despite the declared 35 counts/s rise limit. Catch-up's desired 255 uses the same exposure state, so an in-band->catch-up edge cannot recreate the jump. Only genuine controller resets reopen the exposure; their independent engage ramp still owns the new-session 0->full edge. No config/packet/struct/SW_VERSION change.
 // V2.5-Evo - 2026-08-28 - FM fault completion is now severity-aware. Temporary GPS rejection/Phase-B/staleness, ordinary heading availability and LoRa failures still hard-stop through FM_STOPPING and its 2 s cap 0->255 manual-return ramp, then preserve the live F1-F6 declaration in FM_ARMED with every automatic proof cleared. A trigger held across the anomaly must be released once before a fresh >D_engage proof can start. Divergence, FM_RETURN runtime/not-closing and a proven compass-vs-COG contradiction remain terminal: STOPPING -> FM_IDLE and deliberate TX re-arm. FM_FLAG_ARMED marks recoverable STOPPING to the TX, so the existing packet byte and SW_VERSION remain unchanged.
-// V2.5-Evo - 2026-08-28 - Follow-Me catch-up no longer applies the configured 25 km/h Boogie V-Max: whenever the radial/signed-gap Schmitt selects catch-up, speed cap 3 is fully open at 255 for F1-F6. Trigger, align cap, engage ramp, hard stop and every fault cap remain independent. Inside the distance-control band the PI governor resumes and boogie_vmax_in_followme_kmh remains its absolute ceiling. F4-F6 now request a station radius of 2 x (min_dist + smoothing band), and their additional steering lookahead is at least another 2 x that base rear-follow radius. The speed governor and steering target share the same doubled front-station helper. No config/packet/struct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-28 - Follow-Me catch-up no longer applies the configured 25 km/h Boogie V-Max: whenever the radial/signed-gap Schmitt selects catch-up, speed cap 3 requests 255 for F1-F6. Trigger, bounded cap restoration, align cap, engage ramp, hard stop and every fault cap remain independent. Inside the distance-control band the PI governor resumes and boogie_vmax_in_followme_kmh remains its absolute ceiling. F4-F6 now request a station radius of 2 x (min_dist + smoothing band), and their additional steering lookahead is at least another 2 x that base rear-follow radius. The speed governor and steering target share the same doubled front-station helper. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - A trustworthy 2 s stationary proof now routes every FM_ACTIVE session through FM_RETURN regardless of distance. Outside D_engage this is the existing direct retrieval; at/below D_engage the complementary arrival edge immediately runs the shared RETURN -> FM_ARMED cleanup, clearing separation, min-stop, divergence and controller latches without commanding return motion. FM_ARMED still needs dist > D_engage to start RETURN, preventing a stationary near-range ARMED loop. A held trigger retains the existing cap-0 exit interlock. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM alignment is less underpowered and automatic authority builds sooner: kFmAlignCap rises 13 -> 60 counts (60/255, about 24%) while the heading error exceeds rtm_align_threshold_deg, and kFmEngageRampMs falls 3500 -> 1500 ms for both Follow-Me and FM_RETURN. The rider trigger, hard-stop, approach, speed-governor and lowest-cap arbitration remain unchanged. Compile-time tuning only; no config/packet/struct change and SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_ARMED -> FM_ACTIVE no longer requires a held trigger. Trustworthy radial distance beyond D_engage still has to persist for 2 s and every sensor/link/heading/min-distance/RETURN gate remains unchanged, but the separation proof and lifecycle transition now continue with the trigger open. The trigger remains the final physical deadman for fm_rx_active, automatic steering and all motor authority; squeezing after a trigger-free transition enters through the existing controller reset and 0->full engage ramp. Deep-log block reasons now report distance/dwell gates before "trigger", so a released trigger cannot hide proof progress. No config/packet/struct change; SW_VERSION stays 35.
@@ -1528,6 +1529,7 @@ static float         fm_speed_filtered_kmh         = 0.0f;
 static float         fm_speed_target_filtered_kmh  = 0.0f;
 static float         fm_speed_integrator           = 255.0f;
 static float         fm_speed_cap_slewed            = 255.0f;
+static FollowMeSpeedCapExposure fm_speed_cap_exposure = {255.0f, 0};
 static bool          fm_speed_other_cap_active     = false;
 static bool          fm_speed_catchup_init         = false;
 static bool          fm_speed_catchup_active       = false;
@@ -2564,6 +2566,7 @@ static void fmResetSpeedGovernor()
   fm_speed_target_filtered_kmh = 0.0f;
   fm_speed_integrator          = 255.0f;
   fm_speed_cap_slewed          = 255.0f;
+  followMeResetSpeedCapExposure(fm_speed_cap_exposure);
   fm_speed_other_cap_active    = false;
   fm_speed_catchup_init        = false;
   fm_speed_catchup_active      = false;
@@ -2682,7 +2685,8 @@ static uint16_t fmComputeSpeedGovernorCapForTarget(float raw_target_kmh,
     // learned cap starts from the value that was actually being exposed before the profile change.
     fm_speed_gov_mode             = governor_profile;
     fm_speed_target_filtered_kmh  = raw_target_kmh;
-    fm_speed_integrator           = fm_speed_cap_slewed;
+    fm_speed_integrator           = fm_speed_cap_exposure.cap;
+    fm_speed_cap_slewed           = fm_speed_cap_exposure.cap;
     fm_speed_other_cap_active     = false;
   }
 
@@ -2767,8 +2771,10 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode)
 //   Cap 2 Approach ramp  - F1-3: linear 255 -> 0 across the smoothing band, same shape as RTM's
 //                          approach decel zone. F4-F6 omit it because slowing while the rider catches
 //                          the buggy would collapse the front gap; the hard stop still applies.
-//   Cap 3 Speed governor - catch-up always opens this cap to 255 in F1-F6 until their radial/signed
-//                          distance-control band is reached. In-band, F1-F3 target rider speed plus
+//   Cap 3 Speed governor - catch-up always requests this cap open to 255 in F1-F6 until their
+//                          radial/signed distance-control band is reached. The published cap restores
+//                          at most kFmSpeedCapRisePerS on fresh GPS samples after any reduction.
+//                          In-band, F1-F3 target rider speed plus
 //                          closing margin and F4-F6 vary around rider speed from signed along-track
 //                          error. Non-zero boogie_vmax is the in-band ceiling only. The learned holding
 //                          cap remains non-zero at target; target+2 km/h removes the cap.
@@ -2811,7 +2817,8 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
 
   uint16_t in_band_speed_cap = 255;
   if (catchup_active) {
-    // Catch-up has no GPS speed ceiling. This opens ONLY cap 3; align, engage, radial approach,
+    // Catch-up has no GPS speed ceiling. This requests ONLY cap 3 fully open; its final exposure
+    // still restores gradually after an earlier reduction. Align, engage, radial approach,
     // hard-stop and the rider's physical trigger remain independent limits.
     // Keep the PI cold so leaving catch-up starts from live GPS speed and the in-band target instead
     // of exposing stale integrator state learned before the open interval.
@@ -2820,7 +2827,9 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
   } else {
     in_band_speed_cap = fmComputeSpeedGovernorCap(front_along_m, mode);
   }
-  uint16_t speed_cap = followMeSpeedGovernorCap(catchup_active, in_band_speed_cap);
+  uint16_t desired_speed_cap = followMeSpeedGovernorCap(catchup_active, in_band_speed_cap);
+  uint16_t speed_cap = followMeExposeSpeedGovernorCap(
+      fm_speed_cap_exposure, desired_speed_cap, gps_last_ms, kFmSpeedCapRisePerS);
   if (speed_cap < cap) cap = speed_cap;
 
   // ---- Cap 4: align phase ----
@@ -3078,8 +3087,10 @@ static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned
       target_kmh > absolute_max_kmh) {
     target_kmh = absolute_max_kmh;
   }
-  uint16_t speed_cap = fmComputeSpeedGovernorCapForTarget(
+  uint16_t desired_speed_cap = fmComputeSpeedGovernorCapForTarget(
       target_kmh, kFmSpeedGovernorReturnProfile);
+  uint16_t speed_cap = followMeExposeSpeedGovernorCap(
+      fm_speed_cap_exposure, desired_speed_cap, gps_last_ms, kFmSpeedCapRisePerS);
   if (speed_cap < cap) cap = speed_cap;
 
   float abs_err = (g_heading_error_dx10 != 0x7FFF)

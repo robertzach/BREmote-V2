@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-28 — FM speed-cap return is bounded
+
+The F1–F6 and FM_RETURN speed governors now publish through a separate final cap state. Requested
+reductions, including the overspeed backstop, still take effect immediately. A higher cap can return
+only when a fresh buggy-GPS speed sample arrives and by at most 35 throttle counts per second. The
+same rule applies when catch-up requests cap 255, so neither clearing overspeed nor changing phase
+can expose a stale high PI cap in one tick. Controller resets remain paired with the existing
+zero-start engage ramp. No packet, config layout or SW-version change.
+
 ## 2026-08-28 — Recoverable FM faults return to ARMED
 
 `FM_STOPPING` now has a latched destination. Temporary GPS rejection/Phase-B/staleness, ordinary
