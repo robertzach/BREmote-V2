@@ -76,9 +76,6 @@
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
             
-            // AFM: Reduced scale to 4 so max distances easily fit in the canvas
-            const scale = 4; 
-
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // 1. Resolve target and warning axis. Canvas 270° is rider-forward (up).
@@ -88,7 +85,14 @@
             if (mode === 'Front Left') targetAngle = 270 - Math.min(offset, 89);
             if (mode === 'Front') targetAngle = 270;
             if (mode === 'Front Right') targetAngle = 270 + Math.min(offset, 89);
-            const warningAxis = mode.startsWith('Front') ? targetAngle : 90;
+            const frontMode = mode.startsWith('Front');
+            const warningAxis = frontMode ? targetAngle : 90;
+            const baseFollowMeters = min_dist + smooth;
+            const stationMeters = baseFollowMeters * (frontMode ? 2 : 1);
+            const lookaheadMeters = frontMode ? 2 * baseFollowMeters : 0;
+            const totalMetersVisible = stationMeters + lookaheadMeters + 10;
+            const scale = Math.min((canvas.height / 2 - 50) / totalMetersVisible,
+                                   (canvas.width / 2 - 50) / totalMetersVisible);
 
             // 2. Draw Active/Exit Cones (Hysteresis Buffer)
             ctx.globalAlpha = 0.2;
@@ -97,10 +101,25 @@
             ctx.fillStyle = '#22c55e'; // Green Enter Angle (Narrow Cone)
             drawWedge(centerX, centerY, 1000, warningAxis - enter, warningAxis + enter);
 
-            // 3. Firmware station radius = min distance + smoothing band.
-            const targetDist = (min_dist + smooth) * scale;
+            // 3. F4-F6 station radius is twice the common rear-follow radius.
+            const targetDist = stationMeters * scale;
             const tx = centerX + Math.cos(targetAngle * Math.PI / 180) * targetDist;
             const ty = centerY + Math.sin(targetAngle * Math.PI / 180) * targetDist;
+
+            if (frontMode) {
+                const lx = tx + Math.cos(270 * Math.PI / 180) * lookaheadMeters * scale;
+                const ly = ty + Math.sin(270 * Math.PI / 180) * lookaheadMeters * scale;
+                ctx.globalAlpha = 0.8;
+                ctx.strokeStyle = '#60a5fa';
+                ctx.setLineDash([6, 4]);
+                ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(lx, ly); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#60a5fa';
+                ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2); ctx.fill();
+                ctx.font = "bold 11px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("LENKZIEL", lx, ly - 10);
+            }
 
             // 4. Draw Safety Zones around the Boogie Target
             ctx.globalAlpha = 0.3;

@@ -66,6 +66,7 @@
 #include "../Common/FollowMeActivation.h"
 #include "../Common/FollowMeGeometry.h"
 #include "../Common/FollowMeMinDistance.h"
+#include "../Common/FollowMeSpeedControl.h"
 #include "../Common/SteeringCurve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -152,7 +153,7 @@ struct confStruct {
     uint16_t kalman_en;      // Kalman filter runtime enable flag (0=disabled, 1=enabled)
 
     //Follow-me
-    float boogie_vmax_in_followme_kmh; // F1-F6 catch-up target/in-band ceiling; 0 opens catch-up speed cap
+    float boogie_vmax_in_followme_kmh; // In-band F1-F6 PI ceiling; catch-up always leaves speed cap open
     float min_dist_m; // minimum allowed distance to the foiler
     float followme_smoothing_band_m; // smoothing band above min distance
     // V2.5-Evo - 2026-08-27 - RENAMED IN PLACE from the retired foiler_low_speed_kmh slot.

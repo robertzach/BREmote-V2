@@ -15,7 +15,7 @@ Non-negotiable (overrides everything below):
 3. Release throttle = buggy stops immediately, always.
 4. Every sensor/link fault drives motor → 0. Geometry/front-position warning thresholds do not gate
    autonomy. The valid signed front gap is nevertheless a speed-governor input and is required to
-   grant F4–F6 V-Max catch-up. The independent `min_dist_m` stop forces cap 0 while inside the
+   grant F4–F6 uncapped catch-up. The independent `min_dist_m` stop forces cap 0 while inside the
    boundary and can recover without discarding a valid separation proof.
 
 FM = autonomous steering + distance-based throttle limiting, under a human throttle hand.
@@ -72,7 +72,7 @@ Any live state ──disarm / declaration expiry / config disable──→ FM_ID
   authority on this tick. An ordinary release leaves the cap unchanged because the physical trigger commands
   zero. Warning-threshold crossings never change state, steering authority or the separation proof.
   The radial/signed distance measurements still select catch-up versus in-band speed regulation;
-  invalid F4–F6 signed geometry cannot grant V-Max catch-up. Reaching `min_dist_m` while the trigger
+  invalid F4–F6 signed geometry cannot grant uncapped catch-up. Reaching `min_dist_m` while the trigger
   is held is different: it pauses automatic authority at cap 0. Trustworthy distance recovery above
   `min_dist_m` clears only that stop, retains the separation proof and resumes through the normal
   engage ramp. If the rider remains below 2 km/h for 2 seconds at any trustworthy distance,
@@ -85,7 +85,7 @@ priority immediately at the 100 Hz PWM layer. FM remains ACTIVE, its separation 
 cap remain in force, and centring the input returns steering to FM. Divergence timing is parked while
 manual steering has priority because the resulting path is rider-commanded, not FM convergence.
 The F4–F6 selected-axis angle thresholds remain diagnostic feedback only. Losing valid signed front
-geometry raises the periodic warning and falls the speed governor back from V-Max catch-up to its
+geometry raises the periodic warning and falls the speed governor back from uncapped catch-up to its
 normal rider-relative target; it does not alter steering, lifecycle state or separation proof.
 
 ## 5. Lifecycle and automatic-control conditions (checked every loop)
@@ -114,7 +114,7 @@ Failure of 1 neither blocks entry into nor exits `FM_ACTIVE`; it only withholds 
 cap write is needed because input throttle is already zero.
 Failures 2–7 prevent proof/readiness while ARMED and end an ACTIVE run through STOPPING. Failure of
 8 means ARMED/manual. Geometry/front warning checks are not activation or
-fault conditions. Valid signed front geometry is still required to grant F4–F6 V-Max catch-up;
+fault conditions. Valid signed front geometry is still required to grant F4–F6 uncapped catch-up;
 without it the normal rider-relative target is used. Condition 9 is the explicit cap-0 stop latch.
 
 ## 6. Target-point computation (the new control code)
@@ -128,10 +128,10 @@ Per control tick (10 Hz), all on RX:
 5. **Steer:** feed `target` to the existing steering pipeline unchanged. Publish `fm_heading_err` and `fm_status` each rotation.
 6. **Side-zone hysteresis:** when the angle between rider course and rider→buggy bearing crosses `zone_angle_enter_deg`/`zone_angle_exit_deg`, blend diagonal ↔ pure-behind (Schmitt pair) so an unstable rider course cannot whip the target point across the wake.
 
-Modes 4–6 replace the trailing point with a front station on the same `d_follow` radius. F5 lies on
-the rider course; F4 rotates the radius by `-near_diag_offset_deg` toward rider-left and F6 by the
-positive angle toward rider-right. Their steering points add a rider-course lookahead while retaining
-the station's cross-track component. The point is kept ahead of the buggy, so excess lead is corrected
+Modes 4–6 replace the trailing point with a front station on a `2 × d_follow` radius. F5 lies on
+the rider course; F4 rotates the doubled radius by `-near_diag_offset_deg` toward rider-left and F6 by
+the positive angle toward rider-right. Their steering points add at least another `2 × d_follow` of
+rider-course lookahead while retaining the station's cross-track component. The point is kept ahead of the buggy, so excess lead is corrected
 by slowing down rather than by a U-turn. Engagement uses the same **radial** `dist > D_engage`
 2-second proof as F1–F3. Consequently F4–F6 may drive from behind toward their forward targets; there
 is no no-autonomous-overtake gate. Loss of rider course, signed lead or selected axis raises a warning
@@ -143,7 +143,7 @@ only. With no valid rider course, F4–F6 temporarily aim straight ahead on the 
 |---|---|---|
 | 1 | Hard stop: `dist <= min_dist_m` → cap 0; recovery above the boundary retains the separation proof; stationary `FM_ACTIVE` completion is owned by the common FM_RETURN path | FM recoverable stop |
 | 2 | Approach ramp: F1–F3 linear 255→0 across the smoothing band; F4–F6 omit it because slowing when caught collapses the front gap | FM approach ramp |
-| 3 | Stateful PI speed governor: outside the applicable distance-control band, F1–F6 use non-zero `boogie_vmax_in_followme_kmh` as the catch-up target. Zero opens only the catch-up speed cap to 255. F1–F3 leave catch-up at the radial `min_dist_m + band` edge; F4–F6 leave it when their valid signed positive along-track error enters one control band. Invalid front geometry cannot grant catch-up, and a 2 m Schmitt margin is required to re-enter it. In-band, F1–F3 target rider speed +10 km/h and F4–F6 vary from rider speed −10 to +10 km/h; F4/F6 target the longitudinal cosine component of their diagonal station radius. GPS speed and target are filtered, a 0.5 km/h deadband suppresses jitter, cap removal is faster than restoration, and a finite target reaches cap 0 at target +2 km/h. | Run-phase governor |
+| 3 | Stateful PI speed governor: outside the applicable distance-control band, F1–F6 open speed cap 3 to 255; `boogie_vmax_in_followme_kmh` does not limit catch-up. F1–F3 leave catch-up at the radial `min_dist_m + band` edge; F4–F6 leave it when their valid signed positive along-track error enters one control band. Invalid front geometry cannot grant catch-up, and a 2 m Schmitt margin is required to re-enter it. In-band, F1–F3 target rider speed +10 km/h and F4–F6 vary from rider speed −10 to +10 km/h; F4/F6 target the longitudinal cosine component of their doubled diagonal station radius. A non-zero Boogie V-Max is the in-band ceiling. GPS speed and target are filtered, a 0.5 km/h deadband suppresses jitter, cap removal is faster than restoration, and a finite target reaches cap 0 at target +2 km/h. | Run-phase governor |
 | 4 | Align phase: heading error > threshold → 60/255 (~24 %) cap | Align-phase pattern |
 | 5 | Engage ramp: 0→cap over 1.5 s whenever held trigger grants or resumes actual automatic authority | FM engage ramp |
 
@@ -169,9 +169,9 @@ compatibility value reconstructs the old `6 × D_engage` limit and then applies 
 |---|---|---|
 | `followme_mode` | TX starting mode / RX stored preference; live arming still requires 0xF2 | 2 (Behind) |
 | `min_dist_m` | hard-stop distance | 10 m |
-| `followme_smoothing_band_m` | hysteresis + ramp band (station = sum) | 10 m |
+| `followme_smoothing_band_m` | hysteresis + ramp band (`d_follow = min_dist + band`; F4–F6 station radius = `2 × d_follow`) | 10 m |
 | `near_diag_offset_deg` | diagonal offset for modes 1/3 and front modes 4/6; F5 uses 0° | 45° |
-| `boogie_vmax_in_followme_kmh` | F1–F6 catch-up target and in-band PI ceiling; 0 opens the catch-up speed cap only, then restores rider-relative regulation in-band | 25 km/h (~15.5 mph) |
+| `boogie_vmax_in_followme_kmh` | in-band F1–F6 PI ceiling only; catch-up always opens speed cap 3 to 255; 0 removes the absolute in-band ceiling | 25 km/h (~15.5 mph) |
 | `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4–F6 selected-axis warning Schmitt only | 35° / 45° |
 | `fm_engage_dist_m` | one radial F1–F6 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
 | `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |
@@ -198,7 +198,7 @@ not used at runtime.
 | Rider stationary while ACTIVE | filtered speed < 2 km/h for 2 s with trustworthy position | always enter `FM_RETURN`; outside `D_engage` retrieve, at/inside it immediately complete to `FM_ARMED`; common cleanup clears all lifecycle latches |
 | Rider course invalid | speed < ~5 km/h | F1–F3 use radial hold-station target; F4–F6 go straight on buggy heading and raise warning |
 | F1–F3 warning geometry invalid | radial warning Schmitt | stay/control normally; 300 ms warning every 3 s; no cap/state/steering/latch change |
-| F4–F6 lose valid signed front geometry | rider course/front projection unavailable | stay ACTIVE and steer on the existing degraded target; 300 ms warning every 3 s; withdraw V-Max catch-up and use normal rider-relative speed target; no state/steering/latch change |
+| F4–F6 lose valid signed front geometry | rider course/front projection unavailable | stay ACTIVE and steer on the existing degraded target; 300 ms warning every 3 s; withdraw uncapped catch-up and use normal rider-relative speed target; no state/steering/latch change |
 | Trigger released | physical | motor stops; ordinary release and moving min-stop recovery leave state/proof untouched; stationary lifecycle completion is trigger-independent and uses FM_RETURN |
 | Rider stationary while ARMED beyond effective `D_engage` | radial distance > `D_engage` and filtered speed < 2 km/h for 2 s | enter `FM_RETURN`; drive remains trigger-gated |
 | FM Return arrival | radial distance ≤ `D_engage` | stop first, clear latches, preserve declaration and enter `FM_ARMED`; held trigger stays cap 0 until release, then manual cap 255; fresh `>D_engage` proof required |

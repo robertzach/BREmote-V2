@@ -85,9 +85,13 @@
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
 
-            // ---> UPDATED SCALE MATH <---
-            // We find the "total reach" and fit it into the height of the canvas
-            const totalMetersVisible = min_dist + smooth + 10; 
+            const frontMode = mode.startsWith('Front');
+            const baseFollowMeters = min_dist + smooth;
+            const stationMeters = baseFollowMeters * (frontMode ? 2 : 1);
+            const lookaheadMeters = frontMode ? 2 * baseFollowMeters : 0;
+
+            // Fit the full F4-F6 station plus steering-lookahead reach into the canvas.
+            const totalMetersVisible = stationMeters + lookaheadMeters + 10;
             const scale = Math.min((canvas.height / 2 - 50) / totalMetersVisible,
                                    (canvas.width / 2 - 50) / totalMetersVisible);
 
@@ -101,7 +105,6 @@
             if (mode === 'Front') angle = 270;
             if (mode === 'Front Right') angle = 270 + Math.min(offset, 89);
 
-            const frontMode = mode.startsWith('Front');
             const warningAxis = frontMode ? angle : 90;
 
             // 2. Draw warning cones with dynamic radius
@@ -115,10 +118,27 @@
             ctx.fillStyle = 'lime';
             drawSector(cx, cy, coneRadius, warningAxis - enter, warningAxis + enter);
 
-            // 3. Firmware station radius = min distance + smoothing band.
-            const targetDist = (min_dist + smooth) * scale;
+            // 3. F4-F6 station radius is twice the common rear-follow radius.
+            const targetDist = stationMeters * scale;
             const bx = cx + Math.cos(angle * Math.PI / 180) * targetDist;
             const by = cy + Math.sin(angle * Math.PI / 180) * targetDist;
+
+            // Front steering keeps the station's cross-track component and looks another two base
+            // follow radii straight ahead along the rider course.
+            if (frontMode) {
+                const lx = bx + Math.cos(270 * Math.PI / 180) * lookaheadMeters * scale;
+                const ly = by + Math.sin(270 * Math.PI / 180) * lookaheadMeters * scale;
+                ctx.globalAlpha = 0.8;
+                ctx.strokeStyle = '#60a5fa';
+                ctx.setLineDash([6, 4]);
+                ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(lx, ly); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#60a5fa';
+                ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2); ctx.fill();
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = "center";
+                ctx.fillText("LENKZIEL", lx, ly - 10);
+            }
 
             // 4. Draw Buggy Zones
             ctx.globalAlpha = 0.25;

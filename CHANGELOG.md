@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28 — Uncapped catch-up and doubled F4–F6 front geometry
+
+The F1–F6 catch-up phase now opens speed cap 3 completely instead of targeting the configured
+`boogie_vmax_in_followme_kmh`. The physical trigger and the independent align, engage, hard-stop and
+fault caps remain in force. When the applicable radial or signed front-gap control band is reached,
+the existing PI speed governor resumes and a non-zero Boogie V-Max remains its absolute ceiling.
+
+F4–F6 now place their requested station at twice the common rear follow radius. Their steering point
+adds at least another two rear-follow radii of course lookahead while retaining the station's signed
+cross-track component. With the 10 m + 10 m defaults, F5 requests 40 m straight ahead; F4/F6 request
+about 28.3 m ahead and 28.3 m left/right. Their nominal steering points are respectively 80 m and
+68.3 m ahead of the lag-compensated anchor. No packet, config layout or SW-version change.
+
 ## 2026-08-28 — Stationary FM_ACTIVE always completes through FM_RETURN
 
 After a trustworthy filtered rider speed below 2 km/h persists for 2 seconds, every `FM_ACTIVE`

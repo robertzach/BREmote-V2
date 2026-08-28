@@ -550,17 +550,19 @@ For every F1–F6 mode, `fm_engage_dist_m` is a **radial** boundary and must rem
 steering, not the proof or `FM_ACTIVE` transition. F4–F6 selected-axis
 `zone_angle_enter_deg`/`zone_angle_exit_deg` checks drive only the
 periodic warning and never change steering, state or the separation proof. Their signed longitudinal
-measurement additionally defines whether V-Max catch-up is safe: an invalid measurement cannot grant
+measurement additionally defines whether uncapped catch-up is safe: an invalid measurement cannot grant
 that faster phase. The front modes still have no no-autonomous-overtake guarantee.
 
-While catching up, F1–F3 target `boogie_vmax_in_followme_kmh` until they enter the radial
-`min_dist_m + followme_smoothing_band_m` zone. F4–F6 do the same only while a valid signed front-gap
-measurement places the buggy more than one control band behind its selected front station. Once the
-corresponding band is reached, F1–F3 return to rider speed +10 km/h and F4–F6 continuously vary from
-rider speed −10 to +10 km/h. A 2 m re-entry margin prevents GPS noise from toggling catch-up at the
-boundary. With `boogie_vmax_in_followme_kmh=0`, only the catch-up speed cap opens to 255 (maximum
-rider-requested throttle); normal in-band PI regulation remains active. For finite targets, the
-overspeed backstop removes the cap between target and target +2 km/h.
+While catching up, F1–F6 open speed cap 3 to 255 (maximum rider-requested throttle), independent of
+`boogie_vmax_in_followme_kmh`. F1–F3 leave catch-up when they enter the radial
+`min_dist_m + followme_smoothing_band_m` zone. F4–F6 do so only while a valid signed front-gap
+measurement places the buggy more than one control band behind its selected front station. Their
+station radius is `2 × (min_dist_m + followme_smoothing_band_m)` and their steering point adds at
+least another two base follow radii of lookahead. Once the corresponding band is reached, F1–F3
+return to rider speed +10 km/h and F4–F6 continuously vary from rider speed −10 to +10 km/h. A 2 m
+re-entry margin prevents GPS noise from toggling catch-up at the boundary. In-band, a non-zero
+`boogie_vmax_in_followme_kmh` remains the absolute PI ceiling; zero removes only that ceiling. For
+finite targets, the overspeed backstop removes the cap between target and target +2 km/h.
 
 A compass-vs-GPS-course disagreement no longer blocks F1–F6 by itself. It latches the compass out
 of the heading ladder, while a valid live GPS COG or the short held-COG bridge may still engage and

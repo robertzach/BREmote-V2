@@ -1,22 +1,23 @@
+// V2.5-Evo - 2026-08-28 - Follow-Me catch-up no longer applies the configured 25 km/h Boogie V-Max: whenever the radial/signed-gap Schmitt selects catch-up, speed cap 3 is fully open at 255 for F1-F6. Trigger, align cap, engage ramp, hard stop and every fault cap remain independent. Inside the distance-control band the PI governor resumes and boogie_vmax_in_followme_kmh remains its absolute ceiling. F4-F6 now request a station radius of 2 x (min_dist + smoothing band), and their additional steering lookahead is at least another 2 x that base rear-follow radius. The speed governor and steering target share the same doubled front-station helper. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - A trustworthy 2 s stationary proof now routes every FM_ACTIVE session through FM_RETURN regardless of distance. Outside D_engage this is the existing direct retrieval; at/below D_engage the complementary arrival edge immediately runs the shared RETURN -> FM_ARMED cleanup, clearing separation, min-stop, divergence and controller latches without commanding return motion. FM_ARMED still needs dist > D_engage to start RETURN, preventing a stationary near-range ARMED loop. A held trigger retains the existing cap-0 exit interlock. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM alignment is less underpowered and automatic authority builds sooner: kFmAlignCap rises 13 -> 60 counts (60/255, about 24%) while the heading error exceeds rtm_align_threshold_deg, and kFmEngageRampMs falls 3500 -> 1500 ms for both Follow-Me and FM_RETURN. The rider trigger, hard-stop, approach, speed-governor and lowest-cap arbitration remain unchanged. Compile-time tuning only; no config/packet/struct change and SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_ARMED -> FM_ACTIVE no longer requires a held trigger. Trustworthy radial distance beyond D_engage still has to persist for 2 s and every sensor/link/heading/min-distance/RETURN gate remains unchanged, but the separation proof and lifecycle transition now continue with the trigger open. The trigger remains the final physical deadman for fm_rx_active, automatic steering and all motor authority; squeezing after a trigger-free transition enters through the existing controller reset and 0->full engage ramp. Deep-log block reasons now report distance/dwell gates before "trigger", so a released trigger cannot hide proof progress. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_STOPPING now latches the concrete fault reason at the state edge and keeps publishing that reason in every Deep-log row for the full throttle-return ramp. The old code replaced it with the generic "stopping" label on the next 10 Hz tick, so a 3 Hz logger commonly never captured the actual GPS/Phase-B/heading/link/divergence cause. Normal Follow-Me and FM_RETURN use the same latch; RETURN safety gates now name their exact failing input, and its runtime/not-closing stops have stable reason codes. Log record size/layout, config and SW_VERSION are unchanged.
 // V2.5-Evo - 2026-08-28 - An FM_ACTIVE min-distance stop is now a recoverable cap-0 pause instead of a release-only latch. If trustworthy radial distance grows above min_dist_m while the rider is moving, only the min-distance stop clears; the separation proof stays valid and Follow-Me resumes through the existing engage ramp and cap chain. [SUPERSEDED later 2026-08-28 for stationary completion: the direct stationary-release handoff was removed in favour of the unified FM_ACTIVE -> FM_RETURN lifecycle described at the top.] No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_RETURN now uses the same stateful PI speed governor as F1-F6 instead of the old stateless (1-speed/target) cap. rtm_target_speed_kmh is the literal 0-50 km/h RETURN setpoint (0 means cap 0); the old 5 km/h fallback and 8 km/h hard limit are removed, while a configured non-zero boogie V-Max remains the final absolute safety ceiling. PI state is cold-started on RETURN entry, pause and exit, and approach/align/engage caps feed the existing anti-windup path. Steering D continuity now includes a target-geometry profile as well as the heading source, so course-valid/degraded, diagonal, front-station and direct-return target changes cannot create a derivative kick. Config layout and SW_VERSION stay unchanged.
-// V2.5-Evo - 2026-08-28 - FM catch-up now uses the configured boogie V-Max in every F1-F6 mode until the corresponding distance-control band is reached. F1-F3 use the radial min_dist+smoothing-band edge; F4-F6 use the signed positive along-track error and require valid front geometry, so a buggy already too far ahead is never accelerated away. A 2 m Schmitt margin prevents GPS noise from repeatedly reopening catch-up. With boogie_vmax_in_followme_kmh=0 only the catch-up-phase speed cap is opened to 255 (maximum rider-requested throttle); normal in-band rider-relative PI regulation remains active. Align, engage, approach, hard-stop, divergence and trigger-deadman caps are unchanged. No config/packet/struct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-28 - FM catch-up phase selection was added for every F1-F6 mode. F1-F3 use the radial min_dist+smoothing-band edge; F4-F6 use the signed positive along-track error and require valid front geometry, so a buggy already too far ahead is never accelerated away. A 2 m Schmitt margin prevents GPS noise from repeatedly reopening catch-up. [SUPERSEDED later 2026-08-28 for the catch-up target: catch-up now always opens speed cap 3 to 255, independent of boogie_vmax_in_followme_kmh; the configured V-Max remains the in-band PI ceiling.] Align, engage, approach, hard-stop, divergence and trigger-deadman caps are unchanged. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-27 - The coherent Level-4 FM snapshot now includes the raw heading-evidence chain: configured ladder mode, live/held COG subconditions, snapshot freshness, compass-vs-COG comparison/difference, latch state and set/clear dwell progress. It is computed read-only at the end of the existing 10 Hz FM tick and lets a log explain why condition 6 passed without altering heading selection. No control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - A proven compass-vs-COG disagreement no longer blocks or aborts Follow-Me. The disagreement still latches and withdraws the compass, but live GPS COG and the short held-COG bridge remain valid FM heading sources. Per-tick disagreement no longer vetoes that valid COG. FM still requires an actual heading: no/stale/frozen COG while the compass is withdrawn remains a condition-6 failure. Telemetry and serial diagnostics now report GPS-only degradation instead of "will not engage". No config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - FM divergence ceiling is now configurable as the absolute-metre fm_diverge_dist_m. Its effective value is never below 2 x D_engage and never above 100 m. The setting claims the existing final reserved float without changing layout or SW_VERSION; 0 reconstructs the old 6 x D_engage behavior and applies the new 100 m cap for existing SW35 configs. Dwell, closure epsilon, engage grace and fault path are unchanged.
 // V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
-// V2.5-Evo - 2026-08-27 - Front geometry expanded to F4 Front-Left, F5 Front and F6 Front-Right. F4/F6 reuse near_diag_offset_deg on the same min_dist+band station radius; their longitudinal speed-governor target is the cosine component of that radius. Target-axis loss remains warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection only: invalid signed front geometry now withdraws V-Max catch-up and falls back to the normal rider-relative target; it still does not stop FM or change steering/state/latch.] Mode/radio/config ranges are 0-6; packet and confStruct layouts are unchanged, so SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-27 - Front geometry expanded to F4 Front-Left, F5 Front and F6 Front-Right. F4/F6 reuse near_diag_offset_deg; their longitudinal speed-governor target is the cosine component of the station radius. Target-axis loss remains warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection: invalid signed front geometry withdraws uncapped catch-up and falls back to the normal rider-relative target. SUPERSEDED later 2026-08-28 for distance: the F4-F6 station radius and additional steering lookahead are both doubled from the common rear-follow radius.] Mode/radio/config ranges are 0-6; packet and confStruct layouts are unchanged, so SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F6 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection: radial/signed distance selects catch-up vs in-band regulation, and invalid signed front geometry cannot grant V-Max. SUPERSEDED 2026-08-28 for the min-distance lifecycle: moving radial recovery retains separation, while every stationary ACTIVE completion now uses the distance-independent FM_RETURN path described at the top.] The retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
 // V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival at/below effective D_engage and a moving-rider cancellation preserve the live F1-F6 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
 // V2.5-Evo - 2026-08-26 - FM_RETURN replaces the separately armed RTM product mode. Any live F1-F6 declaration can enter FM_RETURN after fresh/plausible TX+RX positions show the foiler below 2 km/h and radially beyond effective D_engage for 2 s, including stationary arming before a tow. FM_RETURN holds still for that proof dwell, then uses the shared direct-to-rider RTM steering/align/speed-governor control under the unchanged trigger deadman. [SUPERSEDED 2026-08-27: normal RETURN exits now preserve the declaration and enter FM_ARMED as described above; the completion-bit/IDLE handshake was removed. SUPERSEDED 2026-08-28 for ACTIVE entry distance: ACTIVE now enters at every trustworthy distance, while ARMED retains >D_engage.]
 // V2.5-Evo - 2026-08-26 - [SUPERSEDED] The stationary-near and later min-distance/release rules were replaced by the 2026-08-28 distance-independent stationary FM_ACTIVE -> FM_RETURN transition described at the top. Stationary FM_ARMED still requires >D_engage; normal RETURN exits enter FM_ARMED.
-// V2.5-Evo - 2026-08-26 - FM rider-override semantics changed. Releasing the trigger remains the immediate physical deadman stop without directly ending the FM lifecycle. The TX keeps declaring the selected FM mode until explicit FM/F0 disarm, pre-throttle arm-window expiry, fault or declaration loss. Manual steering outside kFmManualSteerDeadband wins at PWM cadence without steer-cancelling FM or clearing its latch; centring hands steering back to FM, and divergence proof is parked during deliberate manual deflection. Genuine GPS/link/heading/divergence faults remain safety stops; front-position loss is warning-only per the newer rule above. [SUPERSEDED 2026-08-28 for speed-phase selection only: loss withdraws V-Max catch-up.] No config/packet/struct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-26 - FM rider-override semantics changed. Releasing the trigger remains the immediate physical deadman stop without directly ending the FM lifecycle. The TX keeps declaring the selected FM mode until explicit FM/F0 disarm, pre-throttle arm-window expiry, fault or declaration loss. Manual steering outside kFmManualSteerDeadband wins at PWM cadence without steer-cancelling FM or clearing its latch; centring hands steering back to FM, and divergence proof is parked during deliberate manual deflection. Genuine GPS/link/heading/divergence faults remain safety stops; front-position loss is warning-only per the newer rule above. [SUPERSEDED 2026-08-28 for speed-phase selection only: loss withdraws uncapped catch-up.] No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - F4 now accepts boogie_vmax_in_followme_kmh=0 with the same documented meaning as the other Follow-Me modes: no absolute vehicle-speed ceiling. The signed front-gap governor remains active and still targets rider speed +/- the existing closing margin; only the final absolute clamp is skipped. [SUPERSEDED 2026-08-28: zero opens the speed cap completely during catch-up, then the rider-relative governor resumes in-band.] No config/packet/struct change; SW_VERSION stays 35.
-// V2.5-Evo - 2026-08-25 - F4 IN FRONT added as a forward-pacer Follow-Me geometry. [SUPERSEDED 2026-08-26: its activation proof is now the same radial >D_engage dwell as F1-F3, so it may autonomously move from behind to the front target; the front cone/loss is warning-only and never clears the latch or changes cap/steering authority. SUPERSEDED 2026-08-28 for catch-up speed only: invalid signed front geometry withdraws V-Max catch-up, and zero V-Max fully opens the catch-up speed cap.] No new packet, config field or confStruct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-25 - F4 IN FRONT added as a forward-pacer Follow-Me geometry. [SUPERSEDED 2026-08-26: its activation proof is now the same radial >D_engage dwell as F1-F3, so it may autonomously move from behind to the front target; the front cone/loss is warning-only and never clears the latch or changes cap/steering authority. SUPERSEDED 2026-08-28 for catch-up speed: invalid signed front geometry withdraws uncapped catch-up; catch-up now always opens speed cap 3.] No new packet, config field or confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - RX FM HOLD manual-recovery delay reduced 10 -> 2 s. [SUPERSEDED 2026-08-26/27: FM_HOLD was removed; ordinary release remains FM_ACTIVE and preserves proof. SUPERSEDED 2026-08-28: stationary ACTIVE completion is trigger-independent and uses the unified FM_RETURN path.] Compile-time timing change only; no confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - RX RTM/FM D-term wrap fix. heading_error itself was normalized to +/-180 deg, but the derivative subtracted two normalized samples directly. Crossing the branch cut (for example +179 -> -179) therefore looked like a -358 deg step instead of the physical +2 deg change and Kd could saturate steering for one control tick. Normalize the same-source error delta to +/-180 before dividing by dt; source-switch/re-snap suppression, P term, gains, logging and config stay unchanged. No confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - THREE FOLLOW-UPS TO THE PASS BELOW, ALL OF THEM NOTIFICATION, NONE OF THEM CONTROL. (1) THE DEGRADATION NOTICE COULD BE LOST ENTIRELY, NOT MERELY DEFERRED. headingDisagreeAnnounceDegraded() rightly returns without setting its one-shot flag while thr_received >= 25 — four Serial lines upstream of a hard stop would break the motor-to-zero-first rule — but its ONLY call site was inside the if (disagree_now) branch, so the retry needed another MEASURED disagreement. A measurement needs a live COG plus a compass snapshot younger than kHeadingCompareSnapMs, and that snapshot only refreshes while the trigger is released, so a dwell that completed inside the ~1 s window after a squeeze was silenced — and a rider who then finished the session under power and never coasted above rtm_cog_min_speed_kmh again rode the WHOLE SESSION with the compass withdrawn and Follow-Me refusing to engage, announced nowhere but a manual ?diag. getRtmHeading() now offers the notice on EVERY tick while the verdict stands, so the retry no longer depends on the evidence coming back; the deferral guard itself is untouched, and the print still cannot land between a proven fault and a motor-stopping write, because it can only fire below 25 counts where the deadman already holds the motor at 0. (2) A FAULT PROVEN WHILE COASTING NOW REACHES THE REMOTE. fm_fault_alarm_ms was set only if (thr_held), but the heading-disagree latch can only complete with the trigger RELEASED — so for this one fault the sticky fm_flags bit 3 never rose, the TX never learned the run had ended on a fault, and Follow-Me silently re-armed on the next keepalive into a blocked ARMED state whose only field signal was the not-ready flag. The alarm is now also set for a standing heading-disagree fault; every other fault keeps the surprise gating exactly as it was. (3) COMMENT-ONLY: the note in front of the restored FM fault term claimed a HOLD-parked Follow-Me would sit at cap 0 "for the rest of the session". The throttle-release clear rescues FM_HOLD back to FM_ARMED after 10 continuous seconds below 25 counts, so the accurate hazard is narrower — a rider FEATHERING the trigger restarts that timer on every squeeze, never accumulates the 10 s, and gets a dead motor on every squeeze with no explanation. Plus heading_disagree_fault is now volatile: it is read cross-task by Logger.ino through headingDisagreeLatched(), and as a file-scope static whose address never escapes the compiler may cache it. Read-only, log columns only, no control impact. No confStruct change, sizeof stays 192, SW_VERSION stays 35.
@@ -1470,7 +1471,7 @@ static const float    kFmDivergeCloseEpsM    = 2.0f;   // metres of closure over
 //                granted automatic motor/steering authority on THIS tick. An open trigger can enter
 //                and remain in FM_ACTIVE; it needs no cap write because it already commands zero.
 //                Geometry/front loss does not stop FM; invalid signed F4-F6
-//                geometry only withdraws V-Max catch-up to the normal rider-relative target. Crossing
+//                geometry only withdraws uncapped catch-up to the normal rider-relative target. Crossing
 //                min_dist_m pauses at cap 0. Distance recovery clears only that stop and resumes through
 //                the engage ramp while preserving the separation proof. A rider stationary at/below
 //                min_dist_m for 2 s can release the trigger to enter FM_ARMED with both latches cleared
@@ -2124,7 +2125,7 @@ static float fmFrontTargetOffsetDeg(uint8_t mode)
 static float fmFrontTargetAlongM(float d_follow, uint8_t mode)
 {
   FollowMeFrontStation station = followMeFrontStation(
-      d_follow, mode, (float)usrConf.near_diag_offset_deg);
+      followMeFrontStationRadius(d_follow), mode, (float)usrConf.near_diag_offset_deg);
   return (station.along_m > 0.0f) ? station.along_m : 0.0f;
 }
 
@@ -2368,18 +2369,16 @@ static void computeFmTarget(double* out_lat, double* out_lng)
   // The buggy may reach the station point itself. Steering directly at a coincident GPS point
   // makes the bearing noise-dominated and can flip it by 180 degrees, so every front mode aims
   // farther along the rider course while retaining its station's signed cross-track offset.
-  // Station distance remains the existing min_dist + band radius; F4/F6 rotate that radius by the
-  // existing near_diag_offset_deg while F5 is straight ahead.
+  // The requested front station is twice the rear follow radius. F4/F6 rotate that doubled radius
+  // by near_diag_offset_deg while F5 stays straight ahead. The steering carrot then adds at least
+  // another two rear-follow radii along the rider course, keeping the bearing well forward.
   if (fmIsFrontMode(m)) {
     fm_target_profile = kFmTargetProfileFrontBase + m;
-    float lookahead_m = usrConf.followme_smoothing_band_m;
-    float half_follow = 0.5f * d_follow;
-    if (lookahead_m < half_follow) lookahead_m = half_follow;
-    if (lookahead_m < 2.0f)        lookahead_m = 2.0f;
-    if (lookahead_m > d_follow)    lookahead_m = d_follow;
+    float lookahead_m = followMeFrontLookaheadM(d_follow);
 
     FollowMeFrontStation station = followMeFrontStation(
-        d_follow, m, (float)usrConf.near_diag_offset_deg);
+        followMeFrontStationRadius(d_follow), m,
+        (float)usrConf.near_diag_offset_deg);
     float station_along_m = station.along_m;
     float station_cross_m = station.cross_m;
 
@@ -2549,7 +2548,7 @@ static void fmResetSpeedGovernor()
 // Decide whether the buggy is still outside the applicable distance-control band. F1-F3 use the
 // radial outer edge of their approach band. F4-F6 use only a VALID signed front-axis measurement:
 // positive error means the buggy is still behind its requested front station. Invalid front geometry
-// deliberately cannot grant V-Max catch-up authority. Once the inner boundary is reached, another
+// deliberately cannot grant uncapped catch-up authority. Once the inner boundary is reached, another
 // catch-up begins only beyond the additional Schmitt margin above.
 static bool fmUpdateSpeedCatchupPhase(float dist_m, float front_along_m,
                                       bool front_geometry_valid, uint8_t mode)
@@ -2595,21 +2594,17 @@ static bool fmUpdateSpeedCatchupPhase(float dist_m, float front_along_m,
   return fm_speed_catchup_active;
 }
 
-// Compute the requested F1-F6 vehicle speed. During catch-up a configured non-zero boogie V-Max is
-// the target itself. Inside the regulation band, F1-F3 return to rider speed + 10 km/h and F4-F6
+// Compute the requested in-band F1-F6 vehicle speed. F1-F3 target rider speed + 10 km/h and F4-F6
 // vary between rider speed - 10 and rider speed + 10 from signed along-track gap error. The front-left
-// and front-right target is the longitudinal component of their diagonal station radius. In every
-// regulated phase a non-zero boogie_vmax remains an absolute ceiling.
-static float fmSpeedTargetKmh(float front_along_m, uint8_t mode, bool catchup_active)
+// and front-right target is the longitudinal component of their doubled diagonal station radius.
+// A non-zero boogie_vmax remains an absolute in-band ceiling. Catch-up bypasses this function and
+// opens speed cap 3 completely; the human trigger and the other independent caps still apply.
+static float fmSpeedTargetKmh(float front_along_m, uint8_t mode)
 {
   float rider_kmh = fm_rider_speed_kmh;
   if (!isfinite(rider_kmh) || rider_kmh < 0.0f) rider_kmh = 0.0f;
 
   float absolute_max_kmh = usrConf.boogie_vmax_in_followme_kmh;
-  if (catchup_active && isfinite(absolute_max_kmh) && absolute_max_kmh > 0.1f) {
-    return absolute_max_kmh;
-  }
-
   float target_kmh;
   if (fmIsFrontMode(mode)) {
     float d_front = usrConf.min_dist_m + usrConf.followme_smoothing_band_m;
@@ -2727,11 +2722,10 @@ static uint16_t fmComputeSpeedGovernorCapForTarget(float raw_target_kmh,
 
 // F1-F6 target selection stays separate from the shared PI mechanics. FM_RETURN calls the same
 // core with its configured fixed target and its own profile id.
-static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
-                                          bool catchup_active)
+static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode)
 {
   return fmComputeSpeedGovernorCapForTarget(
-      fmSpeedTargetKmh(front_along_m, mode, catchup_active), mode);
+      fmSpeedTargetKmh(front_along_m, mode), mode);
 }
 
 // ------------------------------------------------------------
@@ -2749,11 +2743,11 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
 //   Cap 2 Approach ramp  - F1-3: linear 255 -> 0 across the smoothing band, same shape as RTM's
 //                          approach decel zone. F4-F6 omit it because slowing while the rider catches
 //                          the buggy would collapse the front gap; the hard stop still applies.
-//   Cap 3 Speed governor - catch-up targets non-zero boogie_vmax in F1-F6 until their radial/signed
-//                          distance-control band is reached. With boogie_vmax=0 the catch-up speed cap
-//                          alone is open at 255. In-band, F1-F3 target rider speed + closing margin and
-//                          F4-F6 vary around rider speed from signed along-track error. The learned
-//                          holding cap remains non-zero at target; target+2 km/h removes the cap.
+//   Cap 3 Speed governor - catch-up always opens this cap to 255 in F1-F6 until their radial/signed
+//                          distance-control band is reached. In-band, F1-F3 target rider speed plus
+//                          closing margin and F4-F6 vary around rider speed from signed along-track
+//                          error. Non-zero boogie_vmax is the in-band ceiling only. The learned holding
+//                          cap remains non-zero at target; target+2 km/h removes the cap.
 //   Cap 4 Align phase    - while the heading error is large, clamp to ~24% so the buggy pivots
 //                          toward the target instead of driving away from it.
 //   Cap 5 Engage ramp    - 0 -> full over kFmEngageRampMs whenever actual automatic authority
@@ -2790,22 +2784,19 @@ static uint16_t fmComputeThrottleCap(float dist_m, float front_along_m,
   // ---- Cap 3: stateful PI speed governor ----
   bool catchup_active = fmUpdateSpeedCatchupPhase(
       dist_m, front_along_m, front_geometry_valid, mode);
-  float absolute_max_kmh = usrConf.boogie_vmax_in_followme_kmh;
-  bool unlimited_catchup = catchup_active &&
-      (!isfinite(absolute_max_kmh) || absolute_max_kmh <= 0.1f);
 
-  uint16_t speed_cap;
-  if (unlimited_catchup) {
-    // Zero V-Max explicitly means no speed ceiling during catch-up. This opens ONLY cap 3; align,
-    // engage, radial approach, hard-stop and the rider's physical trigger remain independent limits.
+  uint16_t in_band_speed_cap = 255;
+  if (catchup_active) {
+    // Catch-up has no GPS speed ceiling. This opens ONLY cap 3; align, engage, radial approach,
+    // hard-stop and the rider's physical trigger remain independent limits.
     // Keep the PI cold so leaving catch-up starts from live GPS speed and the in-band target instead
-    // of exposing stale integrator state learned before the unlimited interval.
+    // of exposing stale integrator state learned before the open interval.
     fm_speed_gov_init         = false;
     fm_speed_other_cap_active = false;
-    speed_cap = 255;
   } else {
-    speed_cap = fmComputeSpeedGovernorCap(front_along_m, mode, catchup_active);
+    in_band_speed_cap = fmComputeSpeedGovernorCap(front_along_m, mode);
   }
+  uint16_t speed_cap = followMeSpeedGovernorCap(catchup_active, in_band_speed_cap);
   if (speed_cap < cap) cap = speed_cap;
 
   // ---- Cap 4: align phase ----

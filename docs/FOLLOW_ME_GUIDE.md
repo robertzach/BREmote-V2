@@ -129,9 +129,9 @@ F4–F6 use the same **radial** `>D_engage` 2-second proof as F1–F3. They may 
 toward their forward targets; there is no no-autonomous-overtake guarantee. Signed front lead and
 error from the selected front axis still do not gate steering, state or the separation proof. They do
 determine the speed phase: only a valid measurement showing the buggy more than one control band
-behind its requested station grants V-Max catch-up. If the front position is lost, one medium warning
+behind its requested station grants uncapped catch-up. If the front position is lost, one medium warning
 repeats every 3 seconds—even with the trigger released—and the speed governor falls back to its normal
-rider-relative target instead of granting V-Max catch-up.
+rider-relative target instead of granting uncapped catch-up.
 
 The exact diagonal angle is set by **`near_diag_offset_deg`**. F1/F3 apply it from straight behind;
 F4/F6 apply it from straight ahead. F5 stays at zero offset:
@@ -147,8 +147,10 @@ F4/F6 apply it from straight ahead. F5 stays at zero offset:
 | 60° | 120° | 240° | tucked behind, slightly out |
 | 90° | 90° | 270° | directly beside you |
 
-With the current 20 m station radius and 45° offset, F4/F6 sit approximately **14.1 m ahead**
-and **14.1 m left/right**. F5 sits 20 m directly ahead. Front-mode use is capped below 90° so a
+With the 10 m + 10 m defaults, the front station radius is 40 m. At 45°, F4/F6 sit approximately
+**28.3 m ahead** and **28.3 m left/right**. F5 sits **40 m directly ahead**. The additional steering
+lookahead is at least 40 m, giving nominal along-course steering points 68.3 m ahead for F4/F6 and
+80 m ahead for F5. Front-mode use is capped below 90° so a
 front station cannot be placed behind the rider.
 
 *(0° = ahead of you, 90° = your right, 180° = straight behind, 270° = your left.)*
@@ -235,8 +237,8 @@ fault while you're holding the trigger. A stop after you've already let go just 
 | `followme_mode` | geometry: 1 = Near-Right, **2 = Behind**, 3 = Near-Left, 4 = Front-Left, 5 = Front, 6 = Front-Right | TX seed for the arm gesture |
 | `near_diag_offset_deg` | diagonal angle for F1/F3 and F4/F6 (see §5) | **45°**; F5 ignores it |
 | `min_dist_m` | ACTIVE hard-stop distance | cap 0 inside the boundary; moving radial recovery retains separation; stationary ACTIVE completion uses FM_RETURN and clears the lifecycle latches |
-| `followme_smoothing_band_m` | decel band above the hard stop | follow distance = `min_dist_m` + this |
-| `boogie_vmax_in_followme_kmh` | F1–F6 catch-up target and in-band speed ceiling | 0 opens the speed cap only until the applicable distance-control band is reached; in-band rider-relative regulation remains active |
+| `followme_smoothing_band_m` | decel band above the hard stop | rear follow distance = `min_dist_m` + this; F4–F6 station radius and added lookahead are each twice that base |
+| `boogie_vmax_in_followme_kmh` | in-band F1–F6 PI speed ceiling | catch-up always opens speed cap 3; 0 removes the absolute in-band ceiling |
 | `fm_arm_window_s` *(TX)* | how long an arm survives with no throttle | **180 s** |
 | `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |

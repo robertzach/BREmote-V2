@@ -331,7 +331,7 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | `steering_inverted` | as verified in 2.6 | Wrong sign = runaway |
 | `min_dist_m` | **10 m** (leave generous) | ACTIVE FM hard stop; cap 0 inside the boundary, ramped recovery above it |
 | `followme_smoothing_band_m` | **10 m** | Decel band above the hard stop (follow distance = min_dist_m + band) |
-| `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | F1–F6 catch-up target and in-band FM speed ceiling; 0 allows maximum rider-requested catch-up throttle |
+| `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | In-band F1–F6 PI speed ceiling; catch-up always allows maximum rider-requested throttle; 0 removes the absolute in-band ceiling |
 | `fm_diverge_dist_m` | **100 m default; tune lower deliberately** | Absolute sustained-divergence ceiling; firmware raises it to at least `2 × effective D_engage` and never permits more than 100 m |
 | `followme_mode` | **2 = Behind** (shipped default) | Pick the geometry and confirm it on the display — F1–F6 |
 | GPS anti-spoof (Phase A/B) | leave defaults: HDOP 2.0, accel 3.0 G, teleport 80 km/h, suspect 3, pair-dist 500 m, speed-diff 50 km/h | Tuned for this craft; only widen with reason |
@@ -353,7 +353,8 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 > | **5** | **Front** | forward pacer directly ahead — experimental |
 > | **6** | **Front-Right** | forward-right pacer — experimental |
 >
-> In every F1–F6 mode, a non-zero `boogie_vmax_in_followme_kmh` is the target while catching up.
+> In every F1–F6 mode, catch-up opens speed cap 3 fully; `boogie_vmax_in_followme_kmh` applies only
+> after the applicable distance-control band has been reached.
 > Zero opens the catch-up speed cap to maximum rider-requested throttle until the applicable radial or
 > signed front-gap control band is reached; the rider-relative governor then resumes. Start with a
 > finite, low ceiling for controlled validation whenever possible. F4–F6 may autonomously travel from
@@ -431,7 +432,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 V-Max catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 uncapped catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---
@@ -446,7 +447,7 @@ Preconditions to *engage* (you can arm before these are perfect; it won't engage
 3. **Following:** hold the trigger to grant motor and automatic steering authority through the engage ramp. The buggy trails at your set side/distance and only ever moves on **your** throttle; FM only *subtracts* from it. Releasing stops it immediately without leaving `FM_ACTIVE`.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
 4. **Stop while ACTIVE →** after 2 seconds below 2 km/h, FM always enters `FM_RETURN` and clears the old lifecycle latches. Outside the engage radius, keep holding the trigger to bring the buggy directly toward you; releasing pauses it. At or inside the effective `fm_engage_dist_m`, RETURN completes immediately without return motion. Both arrival and sustained rider motion exit to `FM_ARMED` with the F1–F6 declaration preserved; neither jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
-5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp. Remaining stationary for 2 seconds completes through the common RETURN cleanup. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
+5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use uncapped catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp. Remaining stationary for 2 seconds completes through the common RETURN cleanup. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
 > Before starting a new tow, explicitly disarm FM or select F0. Stationary ACTIVE completion clears
 > its proof through FM_RETURN, but explicit disarm remains the deterministic session boundary.

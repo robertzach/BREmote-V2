@@ -9,6 +9,24 @@ struct FollowMeFrontStation {
   float cross_m;
 };
 
+// Front-pacer modes deliberately use a larger geometry than the rear follow modes. The first
+// factor moves the requested F4-F6 station to twice the common rear follow radius. The second is
+// the additional steering lookahead beyond that station (or beyond an already-leading buggy).
+// Keeping these as shared pure helpers makes the steering target and speed-governor target use the
+// same front geometry.
+static const float kFollowMeFrontStationScale   = 2.0f;
+static const float kFollowMeFrontLookaheadScale = 2.0f;
+
+static inline float followMeFrontStationRadius(float base_follow_radius_m)
+{
+  return base_follow_radius_m * kFollowMeFrontStationScale;
+}
+
+static inline float followMeFrontLookaheadM(float base_follow_radius_m)
+{
+  return base_follow_radius_m * kFollowMeFrontLookaheadScale;
+}
+
 // Bearings increase clockwise: rider-left is negative, rider-right positive. The stored diagonal
 // field remains backwards-compatible through 180 degrees for the rear modes, but front use is
 // clamped below 90 degrees so a mode named Front cannot put its station behind the rider.
