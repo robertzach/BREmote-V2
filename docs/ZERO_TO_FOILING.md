@@ -398,7 +398,9 @@ chop, one-handed, with a foil under you. Learn them dry first.
 > 2. Arm FM. **Standing right next to the buggy, it will not engage** — radial distance has not yet
 >    exceeded `D_engage` for 2 seconds. It stays `FM_ARMED` with manual control available.
 > 3. Walk away from the buggy and watch the **distance readout on the remote climb** — that is your
->    end-to-end proof that both GPS units and the telemetry link are healthy and talking.
+>    end-to-end proof that both GPS units and the telemetry link are healthy and talking. The
+>    2-second proof and transition to `FM_ACTIVE` do not require the trigger; motor and automatic
+>    steering remain off until the trigger is held.
 >
 > **Warning / min stop / fault — know the difference:**
 >
@@ -439,9 +441,9 @@ Confirm the gestures and display before you're in the water:
 Preconditions to *engage* (you can arm before these are perfect; it won't engage until they're met): paired, **GPS fix on both** units, healthy radio + telemetry, calibrated compass.
 
 1. **Float & arm** (toggle: LEFT tap → RIGHT hold; or magnet mid-tow). Two taps = armed. The arm survives up to `fm_arm_window_s` (180 s) with no throttle.
-2. **Whip / separate**, throttle held. Every F1–F6 mode **engages on radial separation only** — beyond `D_engage` for **2 continuous seconds**, confirmed by both GPS units. Side/front angles are not gates.
+2. **Whip / separate.** Every F1–F6 mode enters `FM_ACTIVE` readiness on radial separation only — beyond `D_engage` for **2 continuous seconds**, confirmed by both GPS units. The trigger may be held or released during this proof; side/front angles are not gates.
    - Two ways to separate: whip yourself past the buggy, or keep throttle and steer the buggy to its offset side so it peels off while you carry into the wave.
-3. **Following:** the buggy trails at your set side/distance, steering itself. You keep the throttle held; the buggy only ever moves on **your** throttle and only *subtracts* from it.
+3. **Following:** hold the trigger to grant motor and automatic steering authority through the engage ramp. The buggy trails at your set side/distance and only ever moves on **your** throttle; FM only *subtracts* from it. Releasing stops it immediately without leaving `FM_ACTIVE`.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
 4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F6 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
 5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; if distance grows above the boundary, FM retains separation and resumes through the engage ramp. If you remain stationary there for 2 seconds, release the trigger to enter `FM_ARMED`, restore manual throttle and require a fresh radial `>D_engage` proof. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).

@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - Added the shared, native-testable FollowMeActivation predicates. They separate trigger-independent radial proof/lifecycle readiness from held-trigger automatic authority without changing config, packets, struct layout or SW_VERSION.
 // V2.5-Evo - 2026-08-27 - Deep logs append a 13-byte heading-evidence audit after the existing 83-byte FM audit record: configured heading mode, compass-vs-COG difference, set/clear dwell progress, last-good-COG and compass-snapshot ages, plus twelve raw validity/evidence flags. The BRLG record_size keeps 65-byte and 83-byte Deep files readable with their matching historical CSV headers. Instrumentation only; no control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering without a config reset: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct and rsvd_u16_1 renamed in place to steer_reduction_start_pct. Defaults 35%/50%; cfgValidateCrossField() migrates legacy values before validation. PWM applies the smoothstep curve after manual/FM arbitration using effective throttle, so manual riding and automatic FM share the same rollover protection. Types, offsets, sizeof(confStruct)==192 and SW_VERSION 35 are unchanged.
 // V2.5-Evo - 2026-08-27 - fm_diverge_dist_m claims the banked rsvd_f32_1 slot in place as an absolute-metre setting. The effective limit is clamped to [2 x effective D_engage, 100 m]. Same final float, same offset and sizeof(confStruct)==192, so SW_VERSION remains 35 and stored RX configuration is not reset. Existing boards contain 0 in this formerly unused slot; 0 derives the previous 6 x D_engage limit and applies the new 100 m maximum. New/default configs store 100 m explicitly. No packet or struct-layout change.
@@ -62,6 +63,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/FollowMeActivation.h"
 #include "../Common/FollowMeGeometry.h"
 #include "../Common/FollowMeMinDistance.h"
 #include "../Common/SteeringCurve.h"
@@ -356,9 +358,9 @@ struct confStruct {
     // V2.5-Evo - 2026-05-22 - SW32: TWO-PHASE RTM THROTTLE CONTROL
     //
     // Phase 1 (Align): when |heading_error| > rtm_align_threshold_deg, throttle is
-    //   suppressed to ~5% so the buggy pivots toward the target without driving away.
-    //   At near-zero throttle, motor current is minimal — compass bias is also reduced,
-    //   so hybrid heading mode has cleaner compass snapshot data during alignment.
+    //   limited to 60/255 (~24%) so the buggy turns toward the target without full drive authority.
+    //   This retains substantially more useful thrust than the former 13/255 cap while remaining
+    //   well below unrestricted rider throttle.
     //
     // Phase 2 (Run): once aligned, FM_RETURN uses the shared stateful GPS-speed PI governor.
     //   rtm_target_speed_kmh is its literal 0-50 km/h target; zero commands cap 0.
@@ -1031,7 +1033,7 @@ static_assert(sizeof(VescLogDataL4) == 96,
 #define FM_LOG_GATE_HEADING_DISAGREE    (1UL << 13)
 #define FM_LOG_GATE_GEOMETRY_WARNING    (1UL << 14)
 #define FM_LOG_GATE_FRONT_WARNING       (1UL << 15)
-#define FM_LOG_GATE_CAN_BE_ACTIVE       (1UL << 16)
+#define FM_LOG_GATE_CAN_BE_ACTIVE       (1UL << 16)  // actual authority eligible, trigger included
 #define FM_LOG_GATE_RETURN_EXIT_HOLD    (1UL << 17)
 #define FM_LOG_GATE_MANUAL_STEER        (1UL << 18)
 #define FM_LOG_GATE_DIVERGENCE_FAULT    (1UL << 19)

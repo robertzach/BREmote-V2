@@ -527,8 +527,10 @@ The override is RAM-only. After a reboot, the TX seeds the next arm from its con
 4. Hold LEFT for the previous mode or RIGHT for the next. The first step occurs after 2 seconds and repeats every 2 seconds while held. Each step is sent immediately to RX.
 
 The armed selector wraps F1↔F6 and deliberately skips F0. Use the existing combo gesture for an
-explicit F0/disarm. When the trigger is pulled again, RX applies the new station through its safe
-controller reset and engage ramp.
+explicit F0/disarm. The radial 2-second separation proof and `FM_ARMED → FM_ACTIVE` lifecycle edge
+do not require the trigger to be held. `FM_ACTIVE` can therefore mean ready while the motor and
+automatic steering are still off. When the trigger is pulled, RX grants actual automatic authority
+through its safe controller reset and engage ramp.
 
 ### Modes
 
@@ -543,7 +545,9 @@ controller reset and engage ramp.
 | `F6` | 6 | Front-Right — forward-right pacer at `near_diag_offset_deg` |
 
 For every F1–F6 mode, `fm_engage_dist_m` is a **radial** boundary and must remain exceeded for
-2 seconds. F4–F6 selected-axis `zone_angle_enter_deg`/`zone_angle_exit_deg` checks drive only the
+2 seconds. That proof continues with the trigger open; the trigger gates motion and automatic
+steering, not the proof or `FM_ACTIVE` transition. F4–F6 selected-axis
+`zone_angle_enter_deg`/`zone_angle_exit_deg` checks drive only the
 periodic warning and never change steering, state or the separation proof. Their signed longitudinal
 measurement additionally defines whether V-Max catch-up is safe: an invalid measurement cannot grant
 that faster phase. The front modes still have no no-autonomous-overtake guarantee.
@@ -601,7 +605,7 @@ If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires 
 
 > **⚠️ Set this before your first Follow-Me session.**
 
-`fm_engage_dist_m` (RX web UI: **Follow-Me → FM Engage Distance**) is how far you have to get from the buggy before Follow-Me is allowed to engage for the first time. It is the tow-rope interlock: it exists so FM can never take over while you are still on the rope.
+`fm_engage_dist_m` (RX web UI: **Follow-Me → FM Engage Distance**) is how far you have to get from the buggy before Follow-Me may complete its readiness proof. It is the tow-rope interlock: it prevents automatic authority when the trigger is later held while you are still on the rope.
 
 The same effective distance is the one radial activation boundary for every F1–F6 mode. An ordinary
 trigger release and a moving min-distance recovery preserve a valid proof. A rider who remains
@@ -615,7 +619,8 @@ clears that proof, so automatic FM must again remain outside this distance for 2
 - **8 m is the enforced minimum, not a recommendation** — it is only enough for a rope of about 7 m or shorter.
 - Setting it at or below your rope length would let Follow-Me engage while you are still **on** the rope, which is exactly what the interlock prevents.
 - `0` = auto: the firmware works it out as 1.5 × (Min Distance + Smoothing Band). Use a measured value if you know your rope.
-- You have to stay beyond this distance for 2 seconds before Follow-Me can engage.
+- You have to stay beyond this distance for 2 seconds before RX enters `FM_ACTIVE`; holding the trigger is not required for that proof.
+- Motor and automatic steering still remain off until you hold the trigger, then start through the engage ramp.
 
 ### FM Divergence Limit (RX)
 
@@ -889,7 +894,10 @@ For Follow-Me engage diagnosis, select `log_level=4`. The most useful appended c
 `fm_front_warning`. The remaining named `fm_*_ok` columns expose each individual GPS, heading,
 link, trigger and position gate. `fm_block_reason` is already decoded as text such as
 `below_d_engage`, `separation_dwell`, `return_candidate`, `no_heading` or `link`; no bit-mask
-decoding is required. Existing 65-byte Deep log files retain their original 35-column export.
+decoding is required. `fm_can_be_active` means actual automatic-authority eligibility and therefore
+still includes the trigger. A trigger-free ready row is `fm_state=ACTIVE`, `fm_sep_latched=1`,
+`fm_can_be_active=0`, `fm_block_reason=trigger`. Existing 65-byte Deep log files retain their
+original 35-column export.
 Existing 83-byte FM-audit files retain their 64-column export. New 96-byte files additionally show
 `heading_mode`, `compass_cog_diff_deg`, both disagreement dwell timers, COG/snapshot ages and raw
 `cog_*` / `heading_*` validity flags. These columns distinguish a missing, stale, too-slow or frozen

@@ -91,18 +91,20 @@ don't touch the throttle — so a slow takeoff, a wait, or a short swim won't lo
 Arming is not engaging. Every F1–F6 mode only **engages** when the **radial GPS distance
 confirms you've actually separated** — not from side/front angles and not from a button:
 
-1. You're armed (from §3), throttle held.
+1. You're armed (from §3); the trigger may be held or released.
 2. You whip and separate from the buggy.
 3. Once you are **beyond the engage distance for 2 continuous seconds** — proven by both
-   GPS units — the buggy begins following at your set offset.
+   GPS units — RX enters `FM_ACTIVE` readiness at your set offset.
 
-You keep the throttle held the whole time. No release step is needed; the buggy engages
-*while* your throttle is held (and releasing would just stop it).
+You may keep the trigger held through the proof or release it while separating. The trigger is not
+an input to the proof or the `FM_ARMED → FM_ACTIVE` transition. It remains the physical deadman:
+the buggy begins moving and steering automatically only while you hold it, through the engage ramp,
+and release still stops the motor immediately.
 
 ### Two ways to separate at the whip
 
 - **Whip yourself to the side** (classic) — you slingshot past the buggy and ride away.
-- **Steer the buggy away** — keep the throttle and steer the buggy to its offset side so
+- **Steer the buggy away** — keep the trigger held and steer the buggy to its offset side so
   *it* peels off while you carry straight into the wave. Your steering during this moment
   does **not** cancel Follow-Me (you're still armed, not yet following). Once you settle and
   the separation holds for 2 s, it engages.

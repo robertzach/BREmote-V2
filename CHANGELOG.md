@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-28 — Trigger-independent Follow-Me readiness
+
+The RX radial separation proof now continues while the trigger is released. After trustworthy
+distance remains beyond effective `D_engage` for 2 seconds, `FM_ARMED` enters `FM_ACTIVE` even with
+the trigger open. This is a lifecycle/readiness transition only: `fm_rx_active`, automatic steering
+and motor authority still require the physical trigger and start through the engage ramp. Stationary
+proof outside `D_engage` still takes the existing `FM_RETURN` path. Deep-log block reasons now show
+distance/proof progress before `trigger`, making the distinction visible without changing the log,
+packet or config layouts. SW versions remain unchanged.
+
 ## 2026-08-28 — Armed Follow-Me mode selection during a tow
 
 With FM armed and the trigger released, holding LEFT now steps backward and holding RIGHT steps
