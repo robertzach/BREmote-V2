@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - Differential motor mixing is now throttle-relative and aggregate-power-neutral: steering redistributes the effective throttle as T-delta / T+delta with delta proportional to T, selected steering and steering_influence. At zero throttle steering therefore commands zero on both motors. Before upper saturation the normalized motor-command sum stays exactly 2*T; saturation can only lower it. The existing throttle-dependent steering-authority curve, inversion, per-channel PWM calibration, trim, motor ramp and final hard-neutral clamp remain in their established order. No config/struct/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering authority: after manual/FM arbitration, scale the selected steering command about neutral 127 using effective throttle and the configurable smoothstep curve (default full authority through 50%, 35% at full throttle). This covers manual riding, FM manual takeover and automatic FM identically.
 // V2.5-Evo - 2026-08-26 - FM manual steering takeover: a rider deflection outside kFmManualSteerDeadband immediately wins over the FM steering override without changing FM state, separation latch or throttle cap. Centring the stick hands steering back to FM. RTM behaviour is unchanged.
 // V2.5-Evo - 2026-07-19 - P3 FM: calcPWM() applies fm_throttle_cap (subtract-only, lowest cap wins) and lets fm_rx_active gate the steering override alongside rtm_rx_active. Throttle can still only be reduced, never added, and the thr_received>=25 steering gate is unchanged.
@@ -126,33 +127,19 @@ void calcPWM()
   else if(usrConf.steering_type == 1)
   {
     //Diff
-    // Map throttle input to PWM range for each motor
-    uint16_t throttle_0 = map(effective_thr, 0, 255, usrConf.PWM0_min, usrConf.PWM0_max);
-    uint16_t throttle_1 = map(effective_thr, 0, 255, usrConf.PWM1_min, usrConf.PWM1_max);
+    // Steering redistributes the permitted throttle instead of adding a gas-independent offset from
+    // the full PWM span. This is calculated in normalized command space first, so unequal channel
+    // calibration ranges do not distort the requested motor-power ratio.
+    DifferentialMotorMix motor_mix = mixThrottleRelativeDifferential(
+        effective_thr, effective_steer, usrConf.steering_influence,
+        usrConf.steering_inverted);
+    int motor_0_pwm = map(motor_mix.motor0, 0, 255, usrConf.PWM0_min, usrConf.PWM0_max);
+    int motor_1_pwm = map(motor_mix.motor1, 0, 255, usrConf.PWM1_min, usrConf.PWM1_max);
 
-    // Compute differential steering adjustment with influence factor
-    int max_steering_offset_0 = map(usrConf.steering_influence, 0, 100, 0, (usrConf.PWM0_max - usrConf.PWM0_min));
-    int max_steering_offset_1 = map(usrConf.steering_influence, 0, 100, 0, (usrConf.PWM1_max - usrConf.PWM1_min));
-
-    // V2.5-Evo - 2026-06-05 - H-1 recentering: removed the +1 bias AND recentre so neutral steering (127)
-    // maps to exactly 0 — both motors sit at PWM_min at rest, killing the ~2us map-quantization residual
-    // that read 1000,1002 (127 mapped to -2 because 0-255 has no whole-number centre). No dead zone, smooth
-    // steering. Neutral stability is handled upstream by the TX tog_deadzone.
-    int center_off_0 = map(127, 0, 255, -max_steering_offset_0, max_steering_offset_0);
-    int center_off_1 = map(127, 0, 255, -max_steering_offset_1, max_steering_offset_1);
-    int steering_offset_0 = map(effective_steer, 0, 255, -max_steering_offset_0, max_steering_offset_0) - center_off_0;
-    int steering_offset_1 = map(effective_steer, 0, 255, -max_steering_offset_1, max_steering_offset_1) - center_off_1;
-
-    if(usrConf.steering_inverted)
-    {
-      PWM0_time = constrain(throttle_0 + usrConf.trim + steering_offset_0, usrConf.PWM0_min, usrConf.PWM0_max);
-      PWM1_time = constrain(throttle_1 - usrConf.trim - steering_offset_1, usrConf.PWM1_min, usrConf.PWM1_max);
-    }
-    else
-    {
-      PWM0_time = constrain(throttle_0 + usrConf.trim - steering_offset_0, usrConf.PWM0_min, usrConf.PWM0_max);
-      PWM1_time = constrain(throttle_1 - usrConf.trim + steering_offset_1, usrConf.PWM1_min, usrConf.PWM1_max);
-    }
+    // Trim remains a symmetric post-calibration correction. The final effective_thr==0 clamp below
+    // still owns the absolute stopped state and cannot be bypassed by trim or ramp residue.
+    PWM0_time = constrain(motor_0_pwm + usrConf.trim, usrConf.PWM0_min, usrConf.PWM0_max);
+    PWM1_time = constrain(motor_1_pwm - usrConf.trim, usrConf.PWM1_min, usrConf.PWM1_max);
   }
   else if(usrConf.steering_type == 2)
   {
@@ -197,7 +184,7 @@ void calcPWM()
   // guarantee, not a correction of any one contributor: with the trigger released, both
   // outputs are the configured minimum and NOTHING is permitted to lift them.
   //
-  // WHAT WAS WRONG — confirmed by arithmetic, not inference:
+  // WHAT WAS WRONG IN THE FORMER FULL-SPAN MIXER — confirmed by arithmetic, not inference:
   //   throttle_0 = map(0, 0,255, PWM0_min, PWM0_max)  ->  PWM0_min
   //   PWM0_time  = constrain(throttle_0 + usrConf.trim - steering_offset_0, min, max)
   // so at ZERO throttle the output was PWM0_min + trim. Any non-zero trim parked a motor
@@ -207,16 +194,14 @@ void calcPWM()
   // own at the dock, 2026-07-27, and had been compensating by widening the VESC's own
   // deadband — i.e. masking an RX bug inside the ESC.
   //
-  // AND THE ONE I DID NOT PROVE: trim is a CONSTANT offset, but the owner described the
-  // behaviour as DRIFTING. Steering neutral is the mechanism that actually drifts —
-  // steering_offset_0/1 recentre to exactly 0 ONLY when steering_received == 127 exactly,
-  // and the H-1 comment above openly delegates that to the TX tog_deadzone. A TX whose
-  // battery rail is sagging (the TX died at the dock the same day) shifts its ADC reference
-  // and therefore its apparent stick centre. That lifts a motor and it drifts.
+  // The later 2026-08-28 throttle-relative mixer separately removes that former steering path:
+  // its turn term is zero whenever effective_thr is zero, regardless of steering-centre drift.
+  // This final clamp deliberately remains as defence in depth for trim, ramp residue and future
+  // contributors; it is the last writer and therefore the stronger stopped-state invariant.
   //
-  // WHY IT IS WRITTEN THIS WAY: patching trim alone would have fixed the cause I proved and
-  // left the cause I suspect — plus ramp residue and whatever is added next — still able to
-  // put throttle on a motor the rider is not asking for. Enforcing the invariant ONCE, at
+  // WHY IT IS WRITTEN THIS WAY: patching individual contributors alone would leave ramp residue
+  // and whatever is added next able to put throttle on a motor the rider is not asking for.
+  // Enforcing the invariant ONCE, at
   // the end, makes it independent of every upstream term. The creator safety philosophy
   // already written throughout this file ("the human trigger remains the sole throttle
   // source") is now enforced instead of merely assumed.

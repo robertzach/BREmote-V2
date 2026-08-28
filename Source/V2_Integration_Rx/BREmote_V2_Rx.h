@@ -68,6 +68,7 @@
 #include "../Common/FollowMeMinDistance.h"
 #include "../Common/FollowMeSpeedControl.h"
 #include "../Common/SteeringCurve.h"
+#include "../Common/DifferentialMixer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"

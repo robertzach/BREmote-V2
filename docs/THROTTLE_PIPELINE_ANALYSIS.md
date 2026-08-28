@@ -45,7 +45,7 @@ Scope: Read-only analysis. No firmware files modified. All findings cite file:li
 ```
 LoRa RX → [Stage 1: unpack] → [Stage 2: RTM safety gates → emergency stop or pass] →
 [Stage 3: approach-cap (subtract-only)] → [Stage 4: failsafe gate] →
-[Stage 5: linear map → µs] → [Stage 6: RMT pulse to ESC pin]
+[Stage 5: throttle-relative differential mix → linear µs map] → [Stage 6: RMT pulse to ESC pin]
 ```
 
 | Stage | File:Line | What it does | SPIFFS field | Conditional |
@@ -54,7 +54,7 @@ LoRa RX → [Stage 1: unpack] → [Stage 2: RTM safety gates → emergency stop 
 | 2. RTM gates | `RTMState.ino:33–130` + `PWM.ino:43` | If any of 9 safety gates fail → `rtm_rx_emergency_stop = true` → `effective_thr = 0` | `rtm_*` family, `vesc_erpm_per_kmh`, `tx_gps_stale_timeout_ms` | RTM active only |
 | 3. Approach cap | `RTMState.ino:289–321` + `PWM.ino:48–51` | Linear ramp: cap goes 255→0 as TX-RX distance shrinks from `rtm_approach_zone_m` to `rtm_stop_distance_m` | `rtm_approach_zone_m`, `rtm_stop_distance_m` | RTM active only |
 | 4. Failsafe gate | `PWM.ino:13` | If `millis() - last_packet >= failsafe_time` → skip the entire pulse generation block | `failsafe_time` (100–10000ms, default 1000) | Always evaluated |
-| 5. Linear µs map | `PWM.ino:63–64`, `:70–71`, `:94` | `map(effective_thr, 0, 255, PWM_min, PWM_max)` (with `+/- trim` per channel) | `PWM0_min/max`, `PWM1_min/max`, `trim`, `steering_type`, `steering_inverted`, `steering_influence` | Always |
+| 5. Differential mix + µs map | `PWM.ino:calcPWM()` | Differential mode redistributes normalized effective throttle as `T−delta / T+delta`, then maps each result to its calibrated PWM range and applies symmetric trim | `PWM0_min/max`, `PWM1_min/max`, `trim`, `steering_type`, `steering_inverted`, `steering_influence` | Always |
 | 6. RMT output | `PWM.ino:131–145` (`generate_pulse`) | RMT clock = 1 MHz → 1 tick = 1 µs; high pulse of `pulse_width_us`, then 1µs low | — | Only when failsafe gate passes |
 | **7. Hard neutral clamp** ⭐ | `PWM.ino`, end of `calcPWM()` | **`effective_thr == 0` → both outputs forced to `PWM_min`.** Runs LAST, after trim, steering, and ramp | — | **Always** |
 
@@ -62,7 +62,11 @@ LoRa RX → [Stage 1: unpack] → [Stage 2: RTM safety gates → emergency stop 
 
 **Field failure 2026-07-27:** a motor crept with the trigger released. At zero throttle the output was `PWM_min + trim − steering_offset`, so **anything non-zero in those terms parked a motor above minimum indefinitely.**
 
-The live contributor was **not** trim (`trim: 0` on this unit) but the **steering offset**, which is applied even at zero throttle. With `steering_influence: 55` over a 1000–2000 µs range the differential authority is **±550 µs — 55 % of the throttle range, live at idle.** `steering_offset` is zero only when the steering byte is *exactly* 127; at ~4.3 µs per count, **ten counts off centre puts roughly 5 % throttle on one motor.** Unlike trim, this *drifts*, because it tracks the TX's live stick ADC.
+The live contributor at the time was **not** trim (`trim: 0` on this unit) but the old **full-span steering offset**, which was applied even at zero throttle. With `steering_influence: 55` over a 1000–2000 µs range the differential authority was **±550 µs — 55 % of the throttle range, live at idle.** `steering_offset` was zero only when the steering byte was *exactly* 127; at ~4.3 µs per count, **ten counts off centre put roughly 5 % throttle on one motor.** Unlike trim, this drifted with the TX stick ADC.
+
+**Current firmware (2026-08-28):** the differential term is throttle-relative and power-neutral in
+normalized command space. It redistributes `T` as `T−delta / T+delta`; the sum cannot exceed `2×T`,
+and `T=0` makes both differential terms zero before the final hard-neutral clamp runs.
 
 ```c
 if (effective_thr == 0) { PWM0_time = usrConf.PWM0_min; PWM1_time = usrConf.PWM1_min; }
