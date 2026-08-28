@@ -1,4 +1,4 @@
-// V2.5-Evo - 2026-08-28 - Armed FM mode selection is now bidirectional hold-to-repeat. With the trigger released, LEFT/RIGHT hold steps backward/forward through F1-F6 after 2 s and every 2 s thereafter; F0 is excluded. Short presses keep their existing gear/cap/display behaviour, combo gestures retain priority, and the hold loop keeps GPS parsing plus FM fault handling alive. No config/packet/SW_VERSION change.
+// V2.5-Evo - 2026-08-28 - Field follow-up for armed FM selection: the first LEFT/RIGHT step and every held repeat now occur after 1 s. Combo detection now recognises only the live LEFT-tap -> RIGHT-hold FM gesture; the retired reverse RTM combo no longer steals a LEFT hold, which was why selection could appear to work only to the right. F0 remains excluded. No config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-17 - StopBuzz FIX: fmDisarm() takes a `commanded` flag; the magnet toggle's two
 //   disarm paths pass "commanded" (silent) because removing the magnet IS the rider asking. The
 //   magnet ADVISORY buzzes (Patterns 5 and 6) are unchanged. The 2026-07-20 tag below is a dated
@@ -267,7 +267,7 @@ bool ctminus()
 //   FM disarmed: RIGHT hold 2s         → cycle telemetry display mode
 //   FM disarmed: LEFT hold 2s          → lock remote (unlock: left hold + throttle touch)
 //   FM armed + trigger released:
-//     LEFT / RIGHT hold                → previous / next F1-F6 mode after 2s, repeat every 2s
+//     LEFT / RIGHT hold                → previous / next F1-F6 mode after 1s, repeat every 1s
 //   LEFT tap → RIGHT hold (combo)      → FM mode cycle/disarm (duration = fm_hold_duration_s)
 //   RIGHT tap → LEFT hold              → no autonomous action (standalone RTM retired)
 // ============================================================
@@ -280,7 +280,7 @@ static const unsigned long COMBO_WINDOW_MS  = 3000UL;  // max gap between tap an
 static const unsigned long COMBO_TAP_MAX_MS = 1000UL;
 
 // Preserve the ordinary short-toggle action when an armed FM press is released before the
-// two-second mode threshold. The action is delayed until release in that one context, which avoids
+// one-second mode threshold. The action is delayed until release in that one context, which avoids
 // changing a gear/cap as a side effect of an intentional FM mode hold.
 static void applySimpleToggleAction(int direction)
 {
@@ -313,10 +313,13 @@ void handleGearToggle(int direction)
   bool change_once       = 1;
   bool long_press_done   = false;
 
-  // Combo valid only if opposite direction tap happened within the window
-  bool has_combo = (last_tap_dir != 0) &&
-                   (last_tap_dir != direction) &&
-                   (millis() - last_tap_ms < COMBO_WINDOW_MS);
+  // Only LEFT tap -> RIGHT hold is still a real combo. The reverse gesture used to arm standalone
+  // RTM, but RTM is retired. Treating that dead gesture as a combo swallowed an armed LEFT hold for
+  // the whole three-second window, making bidirectional FM selection appear right-only.
+  bool has_combo = followMeArmComboPending(last_tap_dir,
+                                           direction,
+                                           millis() - last_tap_ms,
+                                           COMBO_WINDOW_MS);
 
   // The only autonomy combo is FM (LEFT tap + RIGHT hold). FM_RETURN is entered automatically
   // by the RX when the rider is stationary and separated; the reverse standalone-RTM combo is
@@ -343,7 +346,7 @@ void handleGearToggle(int direction)
   // so holding a direction can never disarm Follow-Me accidentally.
   if (!has_combo && isFmArmed())
   {
-    static const unsigned long kFmModeRepeatMs = 2000UL;
+    static const unsigned long kFmModeRepeatMs = 1000UL;
     unsigned long next_mode_ms = pushtime + kFmModeRepeatMs;
     unsigned long last_fm_service_ms = pushtime;
     bool mode_changed = false;
@@ -378,7 +381,7 @@ void handleGearToggle(int direction)
         mode_changed = true;
         last_tap_dir = 0;
         next_mode_ms += kFmModeRepeatMs;
-        // Do not burst through missed steps if another loop service ever takes longer than 2 s.
+        // Do not burst through missed steps if another loop service ever takes longer than 1 s.
         if ((int32_t)(now - next_mode_ms) >= 0) next_mode_ms = now + kFmModeRepeatMs;
       }
     }

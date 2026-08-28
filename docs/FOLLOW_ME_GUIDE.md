@@ -64,12 +64,18 @@ Once FM is armed, you can still change its mode during the tow without disarming
 
 1. Release the trigger and let the toggle return to centre briefly.
 2. Hold **LEFT** to step backward or **RIGHT** to step forward through F1–F6.
-3. The first change occurs after **2 seconds**; keep holding to change again every **2 seconds**.
+3. The first change occurs after **1 second**; keep holding to change again every **1 second**.
 4. Pull the trigger again to continue with the newly displayed mode.
 
 This selector wraps F1↔F6 and never selects F0 accidentally. Explicit disarm stays on the existing
 LEFT-tap → RIGHT-hold combo. Each selected mode is sent to RX immediately; RX resets the controller
 edge and uses its normal engage ramp before restoring power.
+
+The ordinary LEFT-hold TX lock is unavailable while FM is armed because LEFT is the previous-mode
+selector in that state. Disarm FM before locking. A powered mode change is intentionally not mapped
+onto the toggle: while the trigger is held that same control is steering. Release the trigger briefly,
+change the mode, then pull again. The optional magnet input can arm/disarm FM while riding, but does
+not choose a station mode.
 
 ### 3b. The magnet (works during the tow)
 

@@ -421,7 +421,7 @@ chop, one-handed, with a foil under you. Learn them dry first.
 Confirm the gestures and display before you're in the water:
 
 - **Arm FM (toggle, works while floating):** **LEFT tap → RIGHT hold ~3 s.** Display shows **F1–F6**, remote buzzes **two quick taps** = armed. Repeat the gesture to cycle **F1→F2→F3→F4→F5→F6→F0-off** before you're on the throttle.
-- **Change an armed FM mode during the tow:** release the trigger and centre the toggle briefly, then hold **LEFT** for the previous or **RIGHT** for the next F1–F6 mode. It steps after 2 s and repeats every 2 s while held. F0 is excluded; use the combo gesture to disarm deliberately. Pull the trigger again to continue through RX's normal engage ramp.
+- **Change an armed FM mode during the tow:** release the trigger and centre the toggle briefly, then hold **LEFT** for the previous or **RIGHT** for the next F1–F6 mode. It steps after 1 s and repeats every 1 s while held. F0 is excluded; use the combo gesture to disarm deliberately. Pull the trigger again to continue through RX's normal engage ramp.
 - **Arm FM (magnet, works during the tow — if fitted):** hold magnet ~2 s, feel one pulse, pull away → two taps = armed (toggle: same gesture disarms).
 - **Former RTM gesture:** RIGHT tap → LEFT hold has no autonomous action. Return now starts automatically inside an armed FM session.
 - **Reading the FM bar:** no bar = disarmed · **sweeping** = armed & ready · **blinking in place** = armed but not ready · **steady distance bar** = following · **`rE` + full blinking bar** = returning · **`Id`** = legacy-RX completion only · **`St`** = stopped.

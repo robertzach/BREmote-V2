@@ -35,7 +35,7 @@ FM = autonomous steering + distance-based throttle limiting, under a human throt
 This TX-side convention is canonical for ALL surfaces (TX display F0–F6, RX struct, both web UIs, README). Default = 2 (Behind).
 
 While FM is armed, the rider may release the trigger and hold LEFT/RIGHT to step backward/forward
-through F1–F6. The first step occurs after 2 seconds and repeats every 2 seconds while held. This
+through F1–F6. The first step occurs after 1 second and repeats every 1 second while held. This
 armed selector excludes F0; explicit disarm remains on the combo gesture. Each step is transmitted
 immediately. A live RX mode edge neutralizes the old command, resets controller continuity and
 restarts the engage ramp; the radial separation proof remains valid because it is mode-independent.

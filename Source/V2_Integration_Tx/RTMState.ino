@@ -3,7 +3,7 @@
 // immediately and every 2 s until the distance falls below the threshold. It shares Pattern 8 with
 // the existing geometry warning so simultaneous informational conditions do not create overlapping
 // buzz streams. The config slot and packet byte already existed; no layout or SW_VERSION change.
-// V2.5-Evo - 2026-08-28 - While FM is armed and the trigger is released, LEFT/RIGHT hold now steps backwards/forwards through F1-F6 after 2 s and repeats every 2 s. F0 is excluded from this selector and remains an explicit combo-disarm action. Each step is transmitted immediately; no config, packet or SW_VERSION change.
+// V2.5-Evo - 2026-08-28 - While FM is armed and the trigger is released, LEFT/RIGHT hold steps backwards/forwards through F1-F6 after 1 s and repeats every 1 s. F0 is excluded from this selector and remains an explicit combo-disarm action. Each step is transmitted immediately; no config, packet or SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Follow-Me front family expanded to F4 Front-Left, F5 Front and F6 Front-Right. Both gesture cycles, starting-mode validation and display/meta declarations accept 1-6. The existing 0xF2 byte carries the values unchanged, so there is no packet or confStruct change and SW_VERSION stays 27.
 // V2.5-Evo - 2026-08-26 - FM trigger release no longer disarms the TX. Once the rider has applied throttle, the selected 0xF2 mode declaration and its 30 s keepalive persist until explicit FM/F0 disarm, RTM preemption, an RX-reported fault or declaration loss. The existing fm_arm_window_s timeout still applies before the first throttle input. No config/packet/struct change; SW_VERSION stays 27.
 // V2.5-Evo - 2026-04-25 - P7: TX RTM and FM state machines.
@@ -104,7 +104,7 @@ static void gpsKeepAliveDelay(uint32_t ms)
 //   - FM active: user engages throttle to ride
 //
 // CHANGE MODE while armed and trigger released (intercepted by Hall.ino):
-//   - LEFT hold steps backwards, RIGHT hold forwards through F1-F6 after 2 s and every 2 s after.
+//   - LEFT hold steps backwards, RIGHT hold forwards through F1-F6 after 1 s and every 1 s after.
 //   - F0 is excluded; explicit disarm remains on the existing combo gesture.
 //
 // DISARM (any of):

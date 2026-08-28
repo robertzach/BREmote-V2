@@ -52,12 +52,13 @@ packet or config layouts. SW versions remain unchanged.
 ## 2026-08-28 — Armed Follow-Me mode selection during a tow
 
 With FM armed and the trigger released, holding LEFT now steps backward and holding RIGHT steps
-forward through F1–F6. The first step occurs after 2 seconds and repeats every 2 seconds while the
-toggle remains held. Short presses retain their existing gear/cap/display action; combo gestures
-still take priority. The armed selector excludes F0, so a hold cannot disarm FM accidentally; the
-existing combo remains the explicit disarm path. Every step is sent to RX immediately, while TX GPS
-parsing and RX fault ownership continue during the blocking hold. No packet, config or SW-version
-change.
+forward through F1–F6. Following field feedback, the first step occurs after 1 second and repeats
+every 1 second while the toggle remains held. Combo detection recognises only the live LEFT-tap →
+RIGHT-hold FM gesture; the retired reverse RTM combination no longer swallows a LEFT hold. Short
+presses retain their existing gear/cap/display action. The armed selector excludes F0, so a hold
+cannot disarm FM accidentally; the existing combo remains the explicit disarm path. Every step is
+sent to RX immediately, while TX GPS parsing and RX fault ownership continue during the blocking
+hold. No packet, config or SW-version change.
 
 ## 2026-08-27 — Follow-Me front family: F4 Front-Left, F5 Front, F6 Front-Right
 

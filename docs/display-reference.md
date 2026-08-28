@@ -165,7 +165,7 @@ Source font: `docs/Dot_Matrix_Display_10x7_Render.html` — canonical pixel layo
 | `F0` – `F6` | large `LET_F` + mode digit | FM arm/combo confirmation or armed LEFT/RIGHT mode selection |
 | `E 7` | E(3) + space(1) + 7(3) = 7 columns | Water ingress error code E71 (display shows "E 7" — the "1" does not fit; blinks 250ms on/off, non-blocking) |
 
-RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). FM combo confirmations use `displayDigits(LET_F, mode)` for F0–F6; armed LEFT/RIGHT selection uses the same digits but leaves them visible until release or the next 2-second step. `showFullScreenMessage()` remains in use for `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
+RTM exit shows `St` via `displayDigits(LET_S, LET_T)` (large-font, 2s). FM combo confirmations use `displayDigits(LET_F, mode)` for F0–F6; armed LEFT/RIGHT selection uses the same digits but leaves them visible until release or the next 1-second step. `showFullScreenMessage()` remains in use for `E 7` (water ingress). FreeRTOS vibration task continues running during any blocking display hold.
 
 ## R5 Proximity Bar (P9 New)
 Row R5 (`displayBuffer[6]`) is used as a proximity bar during RTM or FM.
