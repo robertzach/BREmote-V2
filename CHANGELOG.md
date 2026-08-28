@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-28 — Differential mixing is throttle-relative and power-neutral
+
+Differential steering no longer adds an offset derived from the full PWM span at every throttle.
+It now redistributes the effective normalized throttle as `T−delta / T+delta`, with `delta`
+proportional to live throttle, steering and `steering_influence`. The two motor commands therefore
+sum to exactly `2×T` before upper saturation; clipping can only lower the sum. Steering creates no
+motor command at zero gas. Inversion, the existing high-throttle steering-authority curve,
+per-channel calibration, trim, motor ramp and final hard-neutral clamp retain their order. No
+config, packet, struct or SW-version change.
+
 ## 2026-08-28 — FM speed-cap return is bounded
 
 The F1–F6 and FM_RETURN speed governors now publish through a separate final cap state. Requested

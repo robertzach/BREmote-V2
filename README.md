@@ -604,6 +604,12 @@ manual takeover during Follow-Me and automatic Follow-Me identically. It uses `e
 the FM safety cap: when motor power is genuinely capped, the matching lower-throttle steering
 authority remains available.
 
+In differential-motor mode the resulting steering command is mixed relative to that effective
+throttle: `delta = throttle × steering × steering_influence`, followed by `T−delta / T+delta` for
+the two motors. Before upper saturation their normalized command sum remains exactly `2×T`; if one
+side reaches 255, clipping can only reduce the sum. Steering therefore cannot create aggregate
+power, and at zero throttle both differential terms are structurally zero.
+
 | RX parameter | Default | Range | Description |
 |---|---:|---:|---|
 | `steer_reduction_start_pct` | 50% | 30–80% | Full steering at and below this effective throttle; smooth reduction begins above it. |
