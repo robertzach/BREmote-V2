@@ -165,7 +165,7 @@ Not every interruption is the same. Follow-Me tells them apart:
 | **You stop beyond the engagement distance** | automatic return | after 2 s below 2 km/h, FM enters `FM_RETURN`; hold the trigger to bring the buggy directly toward you | no separate RTM arm |
 | **You stop inside the engagement distance but outside `min_dist_m`** | ordinary FM | no low-speed transition; FM continues while trigger is held | no |
 | **You steer manually while following** | temporary takeover | your steering wins; FM state and throttle cap stay active; centre the input to return steering to FM | no |
-| **`min_dist_m` is reached** | stop latch | cap 0 until trigger release; distance recovery alone does nothing; release restores manual cap 255 and clears separation proof | no re-arm, but new `>D_engage` proof |
+| **`min_dist_m` is reached** | recoverable stop | cap 0; recovery above the boundary retains separation and resumes through the engage ramp; after 2 s stationary, release enters `FM_ARMED`, restores manual cap 255 and clears both latches | only the stationary handoff needs a new `>D_engage` proof |
 | **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
 | **F4–F6 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
 | **GPS heading/position or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
@@ -231,13 +231,13 @@ fault while you're holding the trigger. A stop after you've already let go just 
 |---|---|---|
 | `followme_mode` | geometry: 1 = Near-Right, **2 = Behind**, 3 = Near-Left, 4 = Front-Left, 5 = Front, 6 = Front-Right | TX seed for the arm gesture |
 | `near_diag_offset_deg` | diagonal angle for F1/F3 and F4/F6 (see §5) | **45°**; F5 ignores it |
-| `min_dist_m` | ACTIVE hard-stop distance | cap 0 latches until trigger release; release clears separation proof |
+| `min_dist_m` | ACTIVE hard-stop distance | cap 0 inside the boundary; radial recovery retains separation; stationary 2 s + release enters `FM_ARMED` and clears both latches |
 | `followme_smoothing_band_m` | decel band above the hard stop | follow distance = `min_dist_m` + this |
 | `boogie_vmax_in_followme_kmh` | F1–F6 catch-up target and in-band speed ceiling | 0 opens the speed cap only until the applicable distance-control band is reached; in-band rider-relative regulation remains active |
 | `fm_arm_window_s` *(TX)* | how long an arm survives with no throttle | **180 s** |
 | `mag_mode` *(TX)* | magnet gesture role: 0 off, 1 = FM | stored legacy values 2/3 are treated as FM-enabled |
 | `fm_display_mode` *(TX)* | what the digit zone shows while armed | 2 = distance to buggy |
-| `fm_engage_dist_m` | radial F1–F6 activation and FM_RETURN arrival radius; 0 selects automatic | a min-stop release requires a fresh 2 s proof above it |
+| `fm_engage_dist_m` | radial F1–F6 activation and FM_RETURN arrival radius; 0 selects automatic | a stationary min-stop handoff requires a fresh 2 s proof above it |
 | `fm_diverge_dist_m` | absolute upper FM_ACTIVE divergence-test distance | default/max 100 m; values below `2 × D_engage` are raised to that minimum; legacy 0 derives the old `6 × D_engage` value under the 100 m cap; fault still needs 3 s without more than 2 m closure |
 | `rtm_target_speed_kmh` | FM_RETURN PI speed target (historical key) | literal 0-50 km/h; 0 = zero speed; non-zero Boogie V-Max may clamp it |
 | `rtm_approach_zone_m` | FM_RETURN slowdown-band width outside the arrival radius (historical key) | minimum effective width 2 m |
@@ -255,10 +255,10 @@ fault while you're holding the trigger. A stop after you've already let go just 
 - **Magnet:** hold ~2 s again (one long buzz = off).
 - **Automatic:** the arm expires after `fm_arm_window_s` with no throttle; a fault ends it.
 
-Trigger release is not a disarm after FM has seen throttle. Entering `FM_RETURN` and releasing a
-latched min-distance stop clear the separation proof; a normal return exit leaves FM armed and waits
-for a fresh proof. Before rigging a new tow, explicit toggle/magnet/F0 disarm remains the deterministic
-session reset.
+Trigger release is not a disarm after FM has seen throttle. Entering `FM_RETURN` and a confirmed
+stationary min-stop release clear the separation proof; a moving min-stop recovery does not. A normal
+return exit leaves FM armed and waits for a fresh proof. Before rigging a new tow, explicit
+toggle/magnet/F0 disarm remains the deterministic session reset.
 
 ---
 

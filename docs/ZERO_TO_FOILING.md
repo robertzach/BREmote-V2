@@ -329,7 +329,7 @@ Power **one board at a time** (the other OFF, per 2.3), join its AP (password de
 | Setting | Safe starting value | Why |
 |---|---|---|
 | `steering_inverted` | as verified in 2.6 | Wrong sign = runaway |
-| `min_dist_m` | **10 m** (leave generous) | ACTIVE FM hard stop; cap 0 latches until trigger release |
+| `min_dist_m` | **10 m** (leave generous) | ACTIVE FM hard stop; cap 0 inside the boundary, ramped recovery above it |
 | `followme_smoothing_band_m` | **10 m** | Decel band above the hard stop (follow distance = min_dist_m + band) |
 | `boogie_vmax_in_followme_kmh` | 25 km/h or lower for your terrain | F1–F6 catch-up target and in-band FM speed ceiling; 0 allows maximum rider-requested catch-up throttle |
 | `fm_diverge_dist_m` | **100 m default; tune lower deliberately** | Absolute sustained-divergence ceiling; firmware raises it to at least `2 × effective D_engage` and never permits more than 100 m |
@@ -405,7 +405,7 @@ chop, one-handed, with a foil under you. Learn them dry first.
 > | | What triggers it | What the buggy does |
 > |---|---|---|
 > | **Warning** | radial/front geometry outside its diagnostic limits | Medium pulse every 3 s; control unchanged |
-> | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0 until trigger release; then manual, fresh `>D_engage` proof required |
+> | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0; recovery above it resumes with proof retained; stationary 2 s + release enters `FM_ARMED`/manual and requires a fresh proof |
 > | **FAULT** | GPS / compass / radio dropout | **Stops**, shows `St` + long buzz, **you must re-arm** |
 >
 > **When does the GPS dot go solid?** Not on satellite count — on **fix quality**. The TX requires a
@@ -429,7 +429,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 V-Max catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` latches cap 0 until release; that release restores manual cap 255 and clears the separation proof, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 V-Max catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---
@@ -444,10 +444,10 @@ Preconditions to *engage* (you can arm before these are perfect; it won't engage
 3. **Following:** the buggy trails at your set side/distance, steering itself. You keep the throttle held; the buggy only ever moves on **your** throttle and only *subtracts* from it.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
 4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F6 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
-5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0 remains latched until you release the trigger; release restores manual throttle and demands a fresh radial `>D_engage` proof before automatic FM resumes. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
+5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; if distance grows above the boundary, FM retains separation and resumes through the engage ramp. If you remain stationary there for 2 seconds, release the trigger to enter `FM_ARMED`, restore manual throttle and require a fresh radial `>D_engage` proof. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
-> Before starting a new tow, explicitly disarm FM or select F0. A min-distance stop release clears
-> its proof, but explicit disarm remains the deterministic session boundary.
+> Before starting a new tow, explicitly disarm FM or select F0. A stationary min-distance handoff
+> clears its proof, but explicit disarm remains the deterministic session boundary.
 
 ---
 

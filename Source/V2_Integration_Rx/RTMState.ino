@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - An FM_ACTIVE min-distance stop is now a recoverable cap-0 pause instead of a release-only latch. If trustworthy radial distance grows above min_dist_m, only the min-distance stop clears; the separation proof stays valid and Follow-Me resumes through the existing engage ramp and cap chain. If the rider instead remains below 2 km/h at/below min_dist_m for 2 s and releases the trigger, the lifecycle moves deliberately to FM_ARMED, clears both stop and separation latches, neutralises steering and exposes manual cap 255. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_RETURN now uses the same stateful PI speed governor as F1-F6 instead of the old stateless (1-speed/target) cap. rtm_target_speed_kmh is the literal 0-50 km/h RETURN setpoint (0 means cap 0); the old 5 km/h fallback and 8 km/h hard limit are removed, while a configured non-zero boogie V-Max remains the final absolute safety ceiling. PI state is cold-started on RETURN entry, pause and exit, and approach/align/engage caps feed the existing anti-windup path. Steering D continuity now includes a target-geometry profile as well as the heading source, so course-valid/degraded, diagonal, front-station and direct-return target changes cannot create a derivative kick. Config layout and SW_VERSION stay unchanged.
 // V2.5-Evo - 2026-08-28 - FM catch-up now uses the configured boogie V-Max in every F1-F6 mode until the corresponding distance-control band is reached. F1-F3 use the radial min_dist+smoothing-band edge; F4-F6 use the signed positive along-track error and require valid front geometry, so a buggy already too far ahead is never accelerated away. A 2 m Schmitt margin prevents GPS noise from repeatedly reopening catch-up. With boogie_vmax_in_followme_kmh=0 only the catch-up-phase speed cap is opened to 255 (maximum rider-requested throttle); normal in-band rider-relative PI regulation remains active. Align, engage, approach, hard-stop, divergence and trigger-deadman caps are unchanged. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-27 - The coherent Level-4 FM snapshot now includes the raw heading-evidence chain: configured ladder mode, live/held COG subconditions, snapshot freshness, compass-vs-COG comparison/difference, latch state and set/clear dwell progress. It is computed read-only at the end of the existing 10 Hz FM tick and lets a log explain why condition 6 passed without altering heading selection. No control/config/packet/SW_VERSION change.
@@ -5,14 +6,14 @@
 // V2.5-Evo - 2026-08-27 - FM divergence ceiling is now configurable as the absolute-metre fm_diverge_dist_m. Its effective value is never below 2 x D_engage and never above 100 m. The setting claims the existing final reserved float without changing layout or SW_VERSION; 0 reconstructs the old 6 x D_engage behavior and applies the new 100 m cap for existing SW35 configs. Dwell, closure epsilon, engage grace and fault path are unchanged.
 // V2.5-Evo - 2026-08-27 - RX FM D-term sign fix. d_error is calculated as (heading_error_now - heading_error_previous) / dt, so the correct PD law is Kp*error + Kd*d(error)/dt. The previous subtraction was anti-damping: a negative derivative while closing the error increased steering instead of reducing it. The existing +/-180 deg delta normalization and source-change resets remain unchanged. No gain, config, packet or struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-27 - Front geometry expanded to F4 Front-Left, F5 Front and F6 Front-Right. F4/F6 reuse near_diag_offset_deg on the same min_dist+band station radius; their longitudinal speed-governor target is the cosine component of that radius. Target-axis loss remains warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection only: invalid signed front geometry now withdraws V-Max catch-up and falls back to the normal rider-relative target; it still does not stop FM or change steering/state/latch.] Mode/radio/config ranges are 0-6; packet and confStruct layouts are unchanged, so SW_VERSION stays 35.
-// V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F6 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection only: radial/signed distance selects catch-up vs in-band regulation, and invalid signed front geometry cannot grant V-Max.] Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
+// V2.5-Evo - 2026-08-26 - Follow-Me now has one radial activation boundary: every F1-F6 mode proves dist > effective D_engage for 2 s; side/front geometry never gates steering or changes the throttle cap and is warning-only. [SUPERSEDED 2026-08-28 for speed-phase selection only: radial/signed distance selects catch-up vs in-band regulation, and invalid signed front geometry cannot grant V-Max. SUPERSEDED 2026-08-28 for min-distance lifecycle: radial recovery now retains separation; only a confirmed stationary release enters FM_ARMED and clears both latches.] Once ACTIVE, reaching min_dist_m latches cap 0 until the rider releases the trigger; that release clears the stop and separation proof, exposes manual cap 255, and a later automatic resume must re-prove >D_engage. Ordinary trigger release leaves the current cap untouched because the trigger itself already commands zero. FM_HOLD remains removed and the retired low-speed config float stays reserved in-place for SW35 ABI compatibility.
 // V2.5-Evo - 2026-08-27 - FM_RETURN now clears the separation latch on entry and always exits normally to FM_ARMED: both arrival below effective D_engage and a moving-rider cancellation preserve the live F1-F6 declaration but require a fresh radial >D_engage proof before automatic Follow-Me may engage again. There is no normal RETURN -> ACTIVE shortcut and no arrival-driven RETURN -> IDLE/TX-disarm handshake. A held trigger remains capped at zero until released once at either normal RETURN exit, preventing an ARMED/manual-throttle surge. Fault, explicit disarm, config disable and declaration expiry retain their existing STOPPING/IDLE semantics. No packet-size or confStruct-size change.
 // V2.5-Evo - 2026-08-26 - FM_RETURN replaces the separately armed RTM product mode. Any live F1-F6 declaration can enter FM_RETURN after fresh/plausible TX+RX positions show the foiler below 2 km/h and radially beyond effective D_engage for 2 s, including stationary arming before a tow. FM_RETURN holds still for that proof dwell, then uses the shared direct-to-rider RTM steering/align/speed-governor control under the unchanged trigger deadman. [SUPERSEDED 2026-08-27: normal RETURN exits now preserve the declaration and enter FM_ARMED as described above; the completion-bit/IDLE handshake was removed.]
-// V2.5-Evo - 2026-08-26 - [SUPERSEDED later the same day] The stationary-near separation reset described here was replaced by the deterministic min-distance stop/release rule above. FM_RETURN still uses the fixed <2 km/h, >D_engage, 2 s proof. [SUPERSEDED 2026-08-27: normal RETURN exits now enter FM_ARMED.]
+// V2.5-Evo - 2026-08-26 - [SUPERSEDED later the same day] The stationary-near separation reset described here was replaced by the deterministic min-distance stop/release rule above. [SUPERSEDED 2026-08-28: min-distance recovery and the stationary-release FM_ARMED edge are now split as described at the top.] FM_RETURN still uses the fixed <2 km/h, >D_engage, 2 s proof. [SUPERSEDED 2026-08-27: normal RETURN exits now enter FM_ARMED.]
 // V2.5-Evo - 2026-08-26 - FM rider-override semantics changed. Releasing the trigger remains the immediate physical deadman stop without directly ending the FM lifecycle. The TX keeps declaring the selected FM mode until explicit FM/F0 disarm, pre-throttle arm-window expiry, fault or declaration loss. Manual steering outside kFmManualSteerDeadband wins at PWM cadence without steer-cancelling FM or clearing its latch; centring hands steering back to FM, and divergence proof is parked during deliberate manual deflection. Genuine GPS/link/heading/divergence faults remain safety stops; front-position loss is warning-only per the newer rule above. [SUPERSEDED 2026-08-28 for speed-phase selection only: loss withdraws V-Max catch-up.] No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-26 - F4 now accepts boogie_vmax_in_followme_kmh=0 with the same documented meaning as the other Follow-Me modes: no absolute vehicle-speed ceiling. The signed front-gap governor remains active and still targets rider speed +/- the existing closing margin; only the final absolute clamp is skipped. [SUPERSEDED 2026-08-28: zero opens the speed cap completely during catch-up, then the rider-relative governor resumes in-band.] No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - F4 IN FRONT added as a forward-pacer Follow-Me geometry. [SUPERSEDED 2026-08-26: its activation proof is now the same radial >D_engage dwell as F1-F3, so it may autonomously move from behind to the front target; the front cone/loss is warning-only and never clears the latch or changes cap/steering authority. SUPERSEDED 2026-08-28 for catch-up speed only: invalid signed front geometry withdraws V-Max catch-up, and zero V-Max fully opens the catch-up speed cap.] No new packet, config field or confStruct change; SW_VERSION stays 35.
-// V2.5-Evo - 2026-08-25 - RX FM HOLD manual-recovery delay reduced 10 -> 2 s. [SUPERSEDED 2026-08-26/27: FM_HOLD was removed; ordinary release remains FM_ACTIVE and preserves proof, while release of a min-distance stop clears its proof immediately.] Compile-time timing change only; no confStruct change; SW_VERSION stays 35.
+// V2.5-Evo - 2026-08-25 - RX FM HOLD manual-recovery delay reduced 10 -> 2 s. [SUPERSEDED 2026-08-26/27: FM_HOLD was removed; ordinary release remains FM_ACTIVE and preserves proof. SUPERSEDED 2026-08-28 for min-distance release: only a confirmed stationary stop release clears proof and enters FM_ARMED.] Compile-time timing change only; no confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-25 - RX RTM/FM D-term wrap fix. heading_error itself was normalized to +/-180 deg, but the derivative subtracted two normalized samples directly. Crossing the branch cut (for example +179 -> -179) therefore looked like a -358 deg step instead of the physical +2 deg change and Kd could saturate steering for one control tick. Normalize the same-source error delta to +/-180 before dividing by dt; source-switch/re-snap suppression, P term, gains, logging and config stay unchanged. No confStruct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - THREE FOLLOW-UPS TO THE PASS BELOW, ALL OF THEM NOTIFICATION, NONE OF THEM CONTROL. (1) THE DEGRADATION NOTICE COULD BE LOST ENTIRELY, NOT MERELY DEFERRED. headingDisagreeAnnounceDegraded() rightly returns without setting its one-shot flag while thr_received >= 25 — four Serial lines upstream of a hard stop would break the motor-to-zero-first rule — but its ONLY call site was inside the if (disagree_now) branch, so the retry needed another MEASURED disagreement. A measurement needs a live COG plus a compass snapshot younger than kHeadingCompareSnapMs, and that snapshot only refreshes while the trigger is released, so a dwell that completed inside the ~1 s window after a squeeze was silenced — and a rider who then finished the session under power and never coasted above rtm_cog_min_speed_kmh again rode the WHOLE SESSION with the compass withdrawn and Follow-Me refusing to engage, announced nowhere but a manual ?diag. getRtmHeading() now offers the notice on EVERY tick while the verdict stands, so the retry no longer depends on the evidence coming back; the deferral guard itself is untouched, and the print still cannot land between a proven fault and a motor-stopping write, because it can only fire below 25 counts where the deadman already holds the motor at 0. (2) A FAULT PROVEN WHILE COASTING NOW REACHES THE REMOTE. fm_fault_alarm_ms was set only if (thr_held), but the heading-disagree latch can only complete with the trigger RELEASED — so for this one fault the sticky fm_flags bit 3 never rose, the TX never learned the run had ended on a fault, and Follow-Me silently re-armed on the next keepalive into a blocked ARMED state whose only field signal was the not-ready flag. The alarm is now also set for a standing heading-disagree fault; every other fault keeps the surprise gating exactly as it was. (3) COMMENT-ONLY: the note in front of the restored FM fault term claimed a HOLD-parked Follow-Me would sit at cap 0 "for the rest of the session". The throttle-release clear rescues FM_HOLD back to FM_ARMED after 10 continuous seconds below 25 counts, so the accurate hazard is narrower — a rider FEATHERING the trigger restarts that timer on every squeeze, never accumulates the 10 s, and gets a dead motor on every squeeze with no explanation. Plus heading_disagree_fault is now volatile: it is read cross-task by Logger.ino through headingDisagreeLatched(), and as a file-scope static whose address never escapes the compiler may cache it. Read-only, log columns only, no control impact. No confStruct change, sizeof stays 192, SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-17 - THREE CORRECTIONS TO THE DEGRADATION PASS BELOW, WHICH ASSUMED THE COMPASS WAS THE LIAR. The cross-check proves only that the compass and the GPS course CANNOT BOTH BE RIGHT. It does not say which one is wrong — the guard says so itself in guard 2's own header: "It deliberately does NOT pick a winner." Degrading the session onto GPS course alone picks one anyway, and it picks the compass as the culprit; if the RX's course is the bad source instead (marina multipath, a wrong dynamic platform model, a lagged COG at low speed) the degradation withdraws the GOOD sensor and operates on the bad one. (1) FOLLOW-ME REFUSES AGAIN — RELEASE BLOCKER. !heading_disagree_fault is back in can_be_active, and back in the FM fault-stop classifier it was deleted with, so a disagreement proven mid-engagement ends the run through the existing FM_STOPPING ramp (back to manual, re-arm required) instead of parking FM in FM_HOLD at cap 0 for the rest of the session. RTM KEEPS DEGRADING, and that part was sound: RTM's degraded behaviour is BOUNDED — with no heading the steering override is pinned at 127 and the align cap holds the throttle at 13/255 on the 180 deg sentinel — and the alternative was a genuinely dangerous half-armed state, buggy dead with the throttle at 0 while the TX still displayed RTM as ACTIVE. FOLLOW-ME IS NOT BOUNDED LIKE THAT: it engages autonomously at rider speed plus a margin, its steering authority is continuous, its only backstops are the divergence fault (about a 6.5 s grace plus a 3 s dwell) and the deadman — and the disagreement is UNMEASURABLE during the engagement, because compare_possible needs a compass snapshot younger than kHeadingCompareSnapMs and the snapshot only refreshes while thr_received < 25, so about a second into the run the comparison goes dormant and COG is served at confidence 3 unchallenged. Refusing to engage is the right answer to "one of my two heading sources is lying and I cannot tell which", and it is the same answer guard 1 already gives a few lines up: HOLDING STRAIGHT IS SAFER THAN STEERING ON THE SURVIVOR. The rider is not left guessing: the one-shot degradation notice still prints, the rate-limited "ARMED, NOT ENGAGING" explanation is restored, fm_flags bit 2 (armed-not-ready) carries the fault again so the TX cannot render "ready" for a Follow-Me that will not engage, and ?diag now reports the latch on demand. (2) THE kCogHoldMs COG HOLD SURVIVES DEGRADATION. The fault term moved back BELOW the hold, to the site it occupied before. The hold serves a last-good GPS COURSE, and the latch is evidence about the COMPASS, so withdrawing a GPS-derived value on compass evidence was outside this guard's charter — and it cost real behaviour twice over: a COG dropout longer than 1.5 s failed FM's condition 6 and forced a stop-and-re-arm the hold would have bridged, and on the RTM side the documented cog_valid flicker in the 3-4 km/h approach band (rtm_target_speed_kmh 4.0 against rtm_cog_min_speed_kmh 3) alternated the steering override between centre and bearing at 10 Hz. Degraded now means precisely "mode 1 minus the compass", which is what the evidence supports. (3) THE CLEAR IS AS STRICT AS THE SET. Setting the fault needs at least four measured samples spanning 5 s of continuity; clearing it took ONE agreeing tick. For a MIRRORED module the reported heading is theta - h_true, so the gap is 2*h_true - theta, which passes below 45 deg in two 45-deg-wide windows per revolution — a rider coasting near one of them cleared the latch instantly with the module still mirrored, and that is exactly the fault ?magalign cannot detect. Agreement must now hold continuously for kHeadingDisagreeMs with measured samples no more than kHeadingDisagreeGapMaxMs apart, mirroring the set. No new config field, no threshold retuned, no confStruct change, sizeof stays 192, SW_VERSION stays 35.
@@ -1358,10 +1359,11 @@ static const float    kFmMotionBaselineS     = 0.4f;   // seconds
 // noise-triggerable threshold into one that needs real, persistent separation.
 static const uint32_t kFmSepDwellMs          = 2000;   // ms
 
-// Fixed definition of "the foiler has stopped" used only by FM_RETURN. The 2 s dwell rejects one
-// low GPS-speed sample; radial distance is used because course/along-track is undefined at rest.
-static const float    kFmLatchResetSpeedKmh  = 2.0f;   // foiler below this = stationary for RETURN
-static const uint32_t kFmLatchResetDwellMs   = 2000;   // stationary + outside D_engage must persist
+// Fixed definition of "the foiler has stopped" shared by the min-distance manual handoff and
+// FM_RETURN. The 2 s dwell rejects one low GPS-speed sample; radial distance is used because
+// course/along-track is undefined at rest.
+static const float    kFmLatchResetSpeedKmh  = 2.0f;   // stationary for min handoff / RETURN
+static const uint32_t kFmLatchResetDwellMs   = 2000;   // either stationary proof must persist
 
 // FM_RETURN uses the same stationary threshold and dwell as the latch lifecycle so there is one
 // definition of "the foiler has stopped". The rider-moving exit has hysteresis, preventing a
@@ -1462,10 +1464,11 @@ static const float    kFmDivergeCloseEpsM    = 2.0f;   // metres of closure over
 //                or fault. fm_rx_active says whether automatic steering is live on
 //                THIS tick. Trigger release keeps FM_ACTIVE and needs no cap write because the trigger
 //                already commands zero. Geometry/front loss does not stop FM; invalid signed F4-F6
-//                geometry only withdraws V-Max catch-up to the normal rider-relative target. Crossing min_dist_m
-//                latches cap 0 until trigger release; release then clears the separation proof and
-//                exposes manual cap 255, so autonomy must re-prove >D_engage. Every automatic resume
-//                restarts the engage ramp and P+D state.
+//                geometry only withdraws V-Max catch-up to the normal rider-relative target. Crossing
+//                min_dist_m pauses at cap 0. Distance recovery clears only that stop and resumes through
+//                the engage ramp while preserving the separation proof. A rider stationary at/below
+//                min_dist_m for 2 s can release the trigger to enter FM_ARMED with both latches cleared
+//                and manual cap 255. Every automatic resume restarts the engage ramp and P+D state.
 //   FM_RETURN  : a stationary rider outside D_engage is retrieved directly. Entry clears the
 //                separation latch. Arrival or sustained rider motion exits to FM_ARMED, never
 //                directly to FM_ACTIVE or FM_IDLE; a fresh >D_engage proof is required.
@@ -1533,20 +1536,25 @@ static unsigned long fm_engage_ms        = 0;
 
 // ---- Separation latch state (V2.5-Evo - 2026-07-20) ----
 // True after every F1-F6 mode has proven radial dist > D_engage for kFmSepDwellMs while the trigger
-// is held. It is not changed by side/front geometry or an ordinary trigger release. Reaching
-// min_dist_m creates a separate hard-stop latch; releasing the trigger after that stop clears both
-// latches, so automatic control cannot resume until radial separation is proven again. IDLE/fault
-// boundaries also clear it.
+// is held. It is not changed by side/front geometry, an ordinary trigger release or a moving
+// min-distance stop that recovers radially. A stationary min-distance stop followed by release
+// enters FM_ARMED and clears this proof. IDLE/fault boundaries also clear it.
 static bool          fm_sep_latched      = false;
 
 // millis() when the rider first went beyond D_engage; 0 = not currently beyond it.
 // Counts the dwell that defeats single-fix GPS spikes.
 static unsigned long fm_sep_over_since_ms = 0;
 
-// Hard stop at min_dist_m. This is intentionally distinct from fm_sep_latched: it stays set while
-// the trigger remains held even if GPS distance grows again. The release edge clears it, clears the
-// separation proof, and publishes cap 255 for manual repositioning before a fresh >D_engage proof.
+// Hard stop at min_dist_m. This is intentionally distinct from fm_sep_latched. Trustworthy distance
+// recovery above min_dist_m clears only this stop, preserving the separation proof. If the rider is
+// instead stationary at/below min_dist_m for kFmLatchResetDwellMs, a release edge clears both latches,
+// enters FM_ARMED and publishes cap 255 for manual repositioning.
 static bool          fm_min_dist_stop_latched = false;
+
+// millis() when a latched min-distance stop first observed the rider below the shared stationary
+// threshold while still at/below min_dist_m. It is continuous evidence: movement, distance recovery,
+// untrusted position or leaving the stop clears it.
+static unsigned long fm_min_dist_stationary_since_ms = 0;
 
 // ---- FM_RETURN lifecycle ----
 // The candidate proof is deliberately separate from fm_sep_latched: RETURN is trigger-independent,
@@ -2726,8 +2734,9 @@ static uint16_t fmComputeSpeedGovernorCap(float front_along_m, uint8_t mode,
 //   plain "if (cap < throttle) throttle = cap", so the human trigger stays the only throttle
 //   source and FM can only subtract.
 //
-//   Cap 1 Hard stop      - dist <= min_dist_m. Handled by the caller as a stop latch: cap 0 remains
-//                          until trigger release, then the separation proof must be rebuilt.
+//   Cap 1 Hard stop      - dist <= min_dist_m. Handled by the caller as a recoverable stop: cap 0
+//                          until distance grows above min_dist_m, with the separation proof retained.
+//                          A stationary stop plus release enters FM_ARMED and clears that proof.
 //   Cap 2 Approach ramp  - F1-3: linear 255 -> 0 across the smoothing band, same shape as RTM's
 //                          approach decel zone. F4-F6 omit it because slowing while the rider catches
 //                          the buggy would collapse the front gap; the hard stop still applies.
@@ -2862,6 +2871,7 @@ static void fmEnterIdle()
   fm_sep_latched       = false;
   fm_sep_over_since_ms = 0;
   fm_min_dist_stop_latched = false;
+  fm_min_dist_stationary_since_ms = 0;
   fm_return_candidate_since_ms = 0;
   fm_return_start_ms            = 0;
   fm_return_resume_since_ms     = 0;
@@ -3047,6 +3057,7 @@ static void fmReturnFaultStop(unsigned long now, const char *reason, bool thr_he
   fm_geometry_warning = false;
   fm_front_warning    = false;
   fm_min_dist_stop_latched = false;
+  fm_min_dist_stationary_since_ms = 0;
   // A RETURN fault must always reach the TX, even if it happens during a trigger-release pause.
   // Otherwise the TX keeps sending its old 0xF2 declaration and can silently re-arm the RX after
   // STOPPING. The fault flag is therefore also the declaration-ownership acknowledgement here.
@@ -3071,6 +3082,7 @@ static void fmExitReturnToArmed()
   fm_sep_latched           = false;
   fm_sep_over_since_ms     = 0;
   fm_min_dist_stop_latched = false;
+  fm_min_dist_stationary_since_ms = 0;
   fm_return_candidate_since_ms = 0;
   fm_return_start_ms            = 0;
   fm_return_resume_since_ms     = 0;
@@ -3348,6 +3360,7 @@ void runFmLoop()
       fm_sep_latched                = false;
       fm_sep_over_since_ms          = 0;
       fm_min_dist_stop_latched      = false;
+      fm_min_dist_stationary_since_ms = 0;
       fm_diverge_since_ms           = 0;
       fm_diverge_start_dist_m       = -1.0f;
       fm_geometry_warning           = false;
@@ -3380,6 +3393,7 @@ void runFmLoop()
     fm_sep_latched             = false;
     fm_sep_over_since_ms       = 0;
     fm_min_dist_stop_latched   = false;
+    fm_min_dist_stationary_since_ms = 0;
     fm_return_candidate_since_ms = 0;
 
     // Arrival is immediate; the approach cap has already been tending to zero as the distance closed.
@@ -3512,7 +3526,7 @@ void runFmLoop()
   // A held trigger plus trustworthy/fault-free positions must show radial dist > effective D_engage
   // continuously for kFmSepDwellMs. Side angles and F4-F6 signed front positions are intentionally not
   // members of this decision. Trigger release interrupts an unfinished dwell but preserves a proof
-  // that was already set (except for the min-distance stop release below).
+  // that was already set (except for the stationary min-distance handoff below).
   if (hard_ok && latch_position_ok && !fm_min_dist_stop_latched && dist_m > d_engage) {
     if (fm_sep_over_since_ms == 0) {
       fm_sep_over_since_ms = now;
@@ -3525,31 +3539,80 @@ void runFmLoop()
     fm_sep_over_since_ms = 0;
   }
 
-  // ---- min_dist_m stop latch ----
+  // ---- min_dist_m recoverable stop ----
   // The first trustworthy <=min sample during an engaged/proven session removes automatic steering
-  // and publishes cap 0 before diagnostics. Distance recovery cannot release it while the same pull
-  // continues. Releasing the trigger clears the stop AND the old separation proof, publishes manual
-  // cap 255, and therefore makes the next automatic resume prove >D_engage again.
-  if (!fm_min_dist_stop_latched && thr_held && latch_position_ok &&
+  // and publishes cap 0 before diagnostics. While the FM_ACTIVE lifecycle continues, trustworthy
+  // radial recovery above min_dist_m clears only this stop: the separation proof remains valid and
+  // the normal !was_controlling path restarts the engage ramp before exposing throttle again.
+  //
+  // A genuinely stopped rider gets a different, deliberate handoff. If the rider remains below the
+  // shared 2 km/h stationary threshold at/below min_dist_m for 2 s, releasing the trigger changes the
+  // lifecycle to FM_ARMED, clears both latches and exposes manual cap 255. The state edge is release-
+  // gated so cap 255 can never appear while the rider is still requesting motor power.
+  if (!fm_min_dist_stop_latched && active_session && thr_held && latch_position_ok &&
       (was_controlling || fm_sep_latched) && dist_m <= min_dist) {
     fm_min_dist_stop_latched = true;
+    fm_min_dist_stationary_since_ms = 0;
     fm_rx_active             = false;
     rtm_steer_override       = 127;
     fm_throttle_cap          = 0;
-    Serial.printf("FM [RX] MIN-DIST STOP LATCHED: dist=%.1f m <= min_dist_m=%.1f m; cap 0 until trigger release\n",
+    Serial.printf("FM [RX] MIN-DIST STOP: dist=%.1f m <= min_dist_m=%.1f m; cap 0, separation proof retained\n",
                   dist_m, min_dist);
   }
 
-  if (fm_min_dist_stop_latched && !thr_held) {
+  bool min_dist_stationary_sample = followMeMinDistanceStationarySample(
+      fm_min_dist_stop_latched, latch_position_ok, dist_m, min_dist,
+      isfinite(fm_rider_speed_kmh), fm_rider_speed_kmh, kFmLatchResetSpeedKmh);
+  if (min_dist_stationary_sample) {
+    if (fm_min_dist_stationary_since_ms == 0) {
+      fm_min_dist_stationary_since_ms = now;
+    }
+  } else {
+    fm_min_dist_stationary_since_ms = 0;
+  }
+
+  bool min_dist_stationary_confirmed = followMeMinDistanceStationaryConfirmed(
+      (uint32_t)fm_min_dist_stationary_since_ms, (uint32_t)now,
+      (uint32_t)kFmLatchResetDwellMs);
+
+  FollowMeMinDistanceAction min_dist_action = followMeMinDistanceAction(
+      fm_min_dist_stop_latched, latch_position_ok, dist_m, min_dist,
+      thr_held, min_dist_stationary_confirmed && fault_ok);
+
+  if (min_dist_action == FM_MIN_DISTANCE_RECOVER) {
     fm_min_dist_stop_latched = false;
+    fm_min_dist_stationary_since_ms = 0;
+    fm_rx_active             = false;
+    rtm_steer_override       = 127;
+    Serial.printf("FM [RX] MIN-DIST RECOVERED: dist=%.1f m > min_dist_m=%.1f m; separation proof retained, ramped resume permitted\n",
+                  dist_m, min_dist);
+  }
+
+  if (min_dist_action == FM_MIN_DISTANCE_HANDOFF_ARMED) {
+    fm_min_dist_stop_latched = false;
+    fm_min_dist_stationary_since_ms = 0;
     fm_sep_latched           = false;
     fm_sep_over_since_ms     = 0;
+    fm_state                 = FM_ARMED;
     fm_rx_active             = false;
     rtm_steer_override       = 127;
     fm_throttle_cap          = 255;
-    if (active_session) fm_geometry_warning = true;
-    Serial.printf("FM [RX] MIN-DIST STOP RELEASED: manual cap 255; fresh radial >D_engage=%.1f m proof required\n",
-                  d_engage);
+    fm_geometry_warning      = true;
+    fm_front_warning         = false;
+    fm_diagonal_engaged      = false;
+    fm_engage_ms             = 0;
+    fm_diverge_since_ms      = 0;
+    fm_diverge_start_dist_m  = -1.0f;
+    fmResetSpeedGovernor();
+    prev_heading_error_deg   = 0.0f;
+    prev_heading_src_valid   = false;
+    prev_steering_update_ms  = 0;
+    g_heading_error_dx10     = 0x7FFF;
+    g_d_error_dx10           = 0x7FFF;
+    fm_diag_block_reason     = FM_LOG_BLOCK_BELOW_D_ENGAGE;
+    Serial.printf("FM [RX] MIN-DIST STATIONARY RELEASE: rider %.1f km/h at dist=%.1f m for %lu ms -> FM_ARMED/manual cap 255; fresh radial >D_engage=%.1f m proof required\n",
+                  fm_rider_speed_kmh, dist_m, (unsigned long)kFmLatchResetDwellMs, d_engage);
+    return;
   }
 
   if (geometry_eval_ok) {
@@ -3650,8 +3713,8 @@ void runFmLoop()
   fm_diag_diverge_fault = diverge_fault;
 
   // The radial separation proof gates eligibility. Side/front geometry is deliberately absent from
-  // this AND chain: it is exported only as a warning. The min-distance stop latch is independent and
-  // can be cleared only by releasing the trigger.
+  // this AND chain: it is exported only as a warning. The min-distance stop is independent and
+  // clears either on radial recovery or on the stationary-release transition to FM_ARMED.
   // V2.5-Evo - 2026-07-25 - A3: !diverge_fault joins the same AND chain. It can only ever REMOVE
   // eligibility, so the worst case of a false positive is FM handing control back to the rider.
   // A heading-disagreement latch is diagnostic state, not an eligibility term. getRtmHeading()
@@ -3757,6 +3820,7 @@ void runFmLoop()
       fm_stop_ms      = now;
       fm_state        = FM_STOPPING;
       fm_min_dist_stop_latched = false;
+      fm_min_dist_stationary_since_ms = 0;
       fm_throttle_cap = 0;         // subtract-only hard stop; the ramp begins next tick
       // V2.5-Evo - 2026-07-25 - F7: ALL fault logging happens BELOW this line, never above it. The
       // divergence detail used to print at the point of detection, which is upstream of the cap write
@@ -3772,8 +3836,9 @@ void runFmLoop()
     } else if (active_session) {
       // ---- FM_ACTIVE without automatic authority — no lifecycle edge ----
       // Geometry never reaches this branch by itself. A released trigger needs no cap write because
-      // its physical throttle value is already zero. The min-distance latch remains cap 0 until that
-      // release; a pending RETURN proof also holds cap 0 only while power is actually requested.
+      // its physical throttle value is already zero. A min-distance stop remains cap 0 until radial
+      // recovery or the stationary-release transition; a pending RETURN proof also holds cap 0 only
+      // while power is actually requested.
       fm_state = FM_ACTIVE;
 
       if (fm_min_dist_stop_latched || (return_proof_wait && thr_held)) {

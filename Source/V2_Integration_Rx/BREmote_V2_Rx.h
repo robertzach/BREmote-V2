@@ -63,6 +63,7 @@
 #include <Arduino.h>
 #include <atomic>
 #include "../Common/FollowMeGeometry.h"
+#include "../Common/FollowMeMinDistance.h"
 #include "../Common/SteeringCurve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

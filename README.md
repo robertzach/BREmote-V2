@@ -568,8 +568,10 @@ steering input returns control to FM. Releasing the trigger still stops the moto
 leaves the lifecycle in `FM_ACTIVE`; an ordinary release does not even rewrite the cap because input
 throttle is already zero. Geometry/front loss produces one medium vibration immediately and every
 3 seconds, including with the trigger released, but has no control effect. If an ACTIVE buggy reaches
-`min_dist_m`, cap 0 latches until release. That release restores manual cap 255 and clears the
-separation proof; automatic FM can resume only after another radial `>D_engage` 2-second proof.
+`min_dist_m`, cap 0 stops it. Trustworthy distance recovery above that boundary retains the separation
+proof and resumes through the normal engage ramp. If the rider instead remains below 2 km/h at/below
+`min_dist_m` for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears
+both latches; automatic FM then needs another radial `>D_engage` 2-second proof.
 Explicit F0/disarm remains the deterministic boundary; genuine sensor/link faults still end the run.
 
 ### Throttle-dependent steering (RX)
@@ -602,8 +604,9 @@ If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires 
 `fm_engage_dist_m` (RX web UI: **Follow-Me → FM Engage Distance**) is how far you have to get from the buggy before Follow-Me is allowed to engage for the first time. It is the tow-rope interlock: it exists so FM can never take over while you are still on the rope.
 
 The same effective distance is the one radial activation boundary for every F1–F6 mode. An ordinary
-trigger release preserves a valid proof. If FM stopped at `min_dist_m`, releasing that stop clears the
-proof, and automatic FM must again remain outside this distance for 2 seconds. With
+trigger release and a moving min-distance recovery preserve a valid proof. A rider who remains
+stationary at/below `min_dist_m` for 2 seconds and then releases the trigger enters `FM_ARMED` and
+clears that proof, so automatic FM must again remain outside this distance for 2 seconds. With
 `fm_engage_dist_m=0`, the automatic value includes the 8 m floor.
 
 **Measure your own tow rope, then set this to at least one metre more than the rope length.** Example: a 20 ft (6.1 m) rope → set **8 m or more**. A longer rope needs a bigger number.
