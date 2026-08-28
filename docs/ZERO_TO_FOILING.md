@@ -407,7 +407,7 @@ chop, one-handed, with a foil under you. Learn them dry first.
 > | | What triggers it | What the buggy does |
 > |---|---|---|
 > | **Warning** | radial/front geometry outside its diagnostic limits | Medium pulse every 3 s; control unchanged |
-> | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0; recovery above it resumes with proof retained; stationary 2 s + release enters `FM_ARMED`/manual and requires a fresh proof |
+> | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0; moving recovery above it resumes with proof retained; stationary 2 s completes through `FM_RETURN` and requires a fresh proof |
 > | **FAULT** | GPS / compass / radio dropout | **Stops**, shows `St` + long buzz, **you must re-arm** |
 >
 > **When does the GPS dot go solid?** Not on satellite count — on **fix quality**. The TX requires a
@@ -445,11 +445,11 @@ Preconditions to *engage* (you can arm before these are perfect; it won't engage
    - Two ways to separate: whip yourself past the buggy, or keep throttle and steer the buggy to its offset side so it peels off while you carry into the wave.
 3. **Following:** hold the trigger to grant motor and automatic steering authority through the engage ramp. The buggy trails at your set side/distance and only ever moves on **your** throttle; FM only *subtracts* from it. Releasing stops it immediately without leaving `FM_ACTIVE`.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
-4. **Stop beyond the engage radius →** after 2 seconds below 2 km/h, FM enters `FM_RETURN` and clears the old separation latch. Keep holding the trigger to bring the buggy directly toward you; releasing pauses it. Arrival inside the effective `fm_engage_dist_m` stops and enters `FM_ARMED` with the F1–F6 declaration preserved. Sustained rider motion also exits to `FM_ARMED`; neither path jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
-5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; if distance grows above the boundary, FM retains separation and resumes through the engage ramp. If you remain stationary there for 2 seconds, release the trigger to enter `FM_ARMED`, restore manual throttle and require a fresh radial `>D_engage` proof. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
+4. **Stop while ACTIVE →** after 2 seconds below 2 km/h, FM always enters `FM_RETURN` and clears the old lifecycle latches. Outside the engage radius, keep holding the trigger to bring the buggy directly toward you; releasing pauses it. At or inside the effective `fm_engage_dist_m`, RETURN completes immediately without return motion. Both arrival and sustained rider motion exit to `FM_ARMED` with the F1–F6 declaration preserved; neither jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
+5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use V-Max catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp. Remaining stationary for 2 seconds completes through the common RETURN cleanup. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
-> Before starting a new tow, explicitly disarm FM or select F0. A stationary min-distance handoff
-> clears its proof, but explicit disarm remains the deterministic session boundary.
+> Before starting a new tow, explicitly disarm FM or select F0. Stationary ACTIVE completion clears
+> its proof through FM_RETURN, but explicit disarm remains the deterministic session boundary.
 
 ---
 

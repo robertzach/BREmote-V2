@@ -40,5 +40,37 @@ int main()
   assert(followMeActiveLifecycle(true, false));
   assert(!followMeActiveLifecycle(false, false));
 
+  // A stopped ACTIVE lifecycle always takes the common RETURN cleanup, at any valid distance.
+  assert(followMeReturnCandidate(
+      false, true, true, 20.0f, engageDistanceM, true, 1.9f, 2.0f));
+  assert(followMeReturnCandidate(
+      false, true, true, 12.0f, engageDistanceM, true, 1.9f, 2.0f));
+  assert(followMeReturnCandidate(
+      false, true, true, 5.0f, engageDistanceM, true, 1.9f, 2.0f));
+
+  // ARMED still starts a real retrieval only outside D_engage, avoiding a near-range state loop.
+  assert(followMeReturnCandidate(
+      true, false, true, 12.1f, engageDistanceM, true, 1.9f, 2.0f));
+  assert(!followMeReturnCandidate(
+      true, false, true, 12.0f, engageDistanceM, true, 1.9f, 2.0f));
+  assert(!followMeReturnCandidate(
+      true, false, true, 5.0f, engageDistanceM, true, 1.9f, 2.0f));
+
+  // The proof still needs trustworthy inputs and a continuously stationary rider.
+  assert(!followMeReturnCandidate(
+      false, true, false, 5.0f, engageDistanceM, true, 1.9f, 2.0f));
+  assert(!followMeReturnCandidate(
+      false, true, true, 5.0f, engageDistanceM, false, 1.9f, 2.0f));
+  assert(!followMeReturnCandidate(
+      false, true, true, 5.0f, engageDistanceM, true, 2.0f, 2.0f));
+  assert(!followMeReturnCandidate(
+      false, false, true, 20.0f, engageDistanceM, true, 1.9f, 2.0f));
+
+  // Arrival is the exact complement of the ARMED outside rule, including equality.
+  assert(!followMeReturnArrived(true, 12.1f, engageDistanceM));
+  assert(followMeReturnArrived(true, 12.0f, engageDistanceM));
+  assert(followMeReturnArrived(true, 5.0f, engageDistanceM));
+  assert(!followMeReturnArrived(false, 5.0f, engageDistanceM));
+
   return 0;
 }

@@ -51,4 +51,34 @@ static inline bool followMeActiveLifecycle(
   return already_active || lifecycle_ready;
 }
 
+// Once an ACTIVE lifecycle has proven that the rider stopped, always route through FM_RETURN so
+// the shared RETURN exit clears every separation/stop/controller latch. Distance only gates a
+// stationary ARMED declaration: it may start a real retrieval only from outside D_engage. An ACTIVE
+// session may start the same proof at any trustworthy distance; at/below D_engage it immediately
+// satisfies followMeReturnArrived() and normalises to FM_ARMED without commanding return motion.
+static inline bool followMeReturnCandidate(
+    bool armed_session,
+    bool active_session,
+    bool position_ok,
+    float distance_m,
+    float engage_distance_m,
+    bool rider_speed_ok,
+    float rider_speed_kmh,
+    float stationary_speed_kmh)
+{
+  return (armed_session || active_session) && position_ok && rider_speed_ok &&
+      rider_speed_kmh < stationary_speed_kmh &&
+      (active_session || distance_m > engage_distance_m);
+}
+
+// Complement the strict outside-entry test at the boundary. This prevents an ACTIVE stationary
+// normalisation at exactly D_engage from lingering in FM_RETURN or receiving return authority.
+static inline bool followMeReturnArrived(
+    bool position_ok,
+    float distance_m,
+    float engage_distance_m)
+{
+  return position_ok && distance_m <= engage_distance_m;
+}
+
 #endif

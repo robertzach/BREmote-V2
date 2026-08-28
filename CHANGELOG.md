@@ -1,12 +1,24 @@
 # Changelog
 
+## 2026-08-28 — Stationary FM_ACTIVE always completes through FM_RETURN
+
+After a trustworthy filtered rider speed below 2 km/h persists for 2 seconds, every `FM_ACTIVE`
+lifecycle now enters `FM_RETURN` regardless of radial distance. Outside effective `D_engage`, this
+starts the existing direct retrieval. At or inside `D_engage`, the complementary arrival edge
+immediately completes to `FM_ARMED` without return motion. Both cases use the same cleanup for the
+separation, min-distance, divergence and controller latches. A held trigger retains the cap-0 exit
+interlock until one release. `FM_ARMED` still requires distance strictly beyond `D_engage` to start
+RETURN, preventing a stationary near-range `ARMED → RETURN → ARMED` loop. The superseded direct
+stationary-min-distance release handoff has been removed; moving radial recovery still retains the
+separation proof. No packet, config layout or SW-version change.
+
 ## 2026-08-28 — Trigger-independent Follow-Me readiness
 
 The RX radial separation proof now continues while the trigger is released. After trustworthy
 distance remains beyond effective `D_engage` for 2 seconds, `FM_ARMED` enters `FM_ACTIVE` even with
 the trigger open. This is a lifecycle/readiness transition only: `fm_rx_active`, automatic steering
 and motor authority still require the physical trigger and start through the engage ramp. Stationary
-proof outside `D_engage` still takes the existing `FM_RETURN` path. Deep-log block reasons now show
+proof takes the `FM_RETURN` path under the state-specific distance rules above. Deep-log reasons show
 distance/proof progress before `trigger`, making the distinction visible without changing the log,
 packet or config layouts. SW versions remain unchanged.
 

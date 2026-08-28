@@ -489,13 +489,14 @@ The former standalone Return-to-Me mode, gesture, TX state machine and 0xF1 cont
 retired. Return is now a state inside Follow-Me and uses the same declaration, fault gates,
 steering controller and effective `fm_engage_dist_m`.
 
-When the rider remains below 2 km/h for 2 seconds while the buggy is outside that radius,
-Follow-Me enters `FM_RETURN`. This can happen after normal following or directly after arming
-while stationary. The buggy remains stopped during the proof and then aims directly at the
-rider. It moves only while the trigger is held; release pauses the return, and deliberate
-steering temporarily takes priority.
+When an `FM_ACTIVE` rider remains below 2 km/h for 2 seconds, Follow-Me always enters `FM_RETURN`,
+regardless of distance. Outside the effective engage radius it performs direct retrieval. At or
+inside the radius it immediately completes to `FM_ARMED` without commanding return motion, using
+the same cleanup for every latch and controller state. A stationary `FM_ARMED` declaration can
+enter RETURN only outside the radius. The buggy remains stopped during the proof and moves only
+while the trigger is held; release pauses a running return, and deliberate steering takes priority.
 
-On arrival at `distance < effective fm_engage_dist_m`, the RX stops first, clears the separation
+On arrival at `distance <= effective fm_engage_dist_m`, the RX stops first, clears the separation
 latch and enters `FM_ARMED`. The TX stays armed and keeps the selected F1–F6 declaration alive;
 automatic Follow-Me cannot resume until a fresh 2-second radial proof above the engagement distance.
 If the trigger is still held, cap 0 remains until it is released once; otherwise manual cap 255 is
@@ -609,8 +610,8 @@ If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires 
 
 The same effective distance is the one radial activation boundary for every F1–F6 mode. An ordinary
 trigger release and a moving min-distance recovery preserve a valid proof. A rider who remains
-stationary at/below `min_dist_m` for 2 seconds and then releases the trigger enters `FM_ARMED` and
-clears that proof, so automatic FM must again remain outside this distance for 2 seconds. With
+stationary in `FM_ACTIVE` for 2 seconds always completes through `FM_RETURN`, which clears that
+proof; automatic FM must then remain outside this distance for 2 seconds again. With
 `fm_engage_dist_m=0`, the automatic value includes the 8 m floor.
 
 **Measure your own tow rope, then set this to at least one metre more than the rope length.** Example: a 20 ft (6.1 m) rope → set **8 m or more**. A longer rope needs a bigger number.
