@@ -60,7 +60,8 @@ FM_IDLE ──live declaration──→ FM_ARMED ──fresh separation proof─
                                   arrival <=D_engage or rider moving
                                                    └────────→ FM_ARMED
 
-FM_ACTIVE / FM_RETURN ──fault──→ FM_STOPPING ──→ FM_IDLE
+FM_ACTIVE / FM_RETURN ──temporary GPS/link/heading availability fault──→ FM_STOPPING ──→ FM_ARMED
+FM_ACTIVE / FM_RETURN ──divergence/heading contradiction/convergence fault──→ FM_STOPPING ──→ FM_IDLE
 Any live state ──disarm / declaration expiry / config disable──→ FM_IDLE
 ```
 
@@ -79,7 +80,7 @@ Any live state ──disarm / declaration expiry / config disable──→ FM_ID
   `FM_ACTIVE` enters `FM_RETURN`. RX geometry warnings repeat every 3 seconds even with no trigger;
   the TX `fm_warn_distance_m` separation warning repeats every 2 seconds at/above its threshold.
 - **FM_RETURN:** entered from `FM_ACTIVE` after the filtered rider speed stays below 2 km/h for 2 s, regardless of distance. A stationary `FM_ARMED` declaration can enter only while radially beyond effective `D_engage`. Entry clears the separation and min-distance latches. During the proof, a held trigger is capped at zero; with the trigger released, zero input already stops the buggy. Outside `D_engage`, RETURN then aims directly at the rider using the FM heading controller, align cap, return speed governor, approach band and convergence check. At or inside `D_engage`, arrival completes immediately without return motion. Trigger release pauses a running retrieval without leaving `FM_RETURN`. Arrival at `dist <= D_engage`, or rider speed above 3 km/h for 1 s, exits only to `FM_ARMED`: the F1–F6 declaration remains live, but automatic Follow-Me needs a fresh 2-second radial proof above `D_engage`. There is no normal shortcut to `FM_ACTIVE` and no arrival-driven transition to `FM_IDLE`. If the trigger is held at the exit edge, cap 0 remains until one release; otherwise manual cap 255 is restored immediately.
-- **FM_STOPPING:** a sensor/link/heading or divergence fault ends the run, ramps the cap back to manual and requires a fresh TX declaration.
+- **FM_STOPPING:** every active sensor/link/heading or divergence fault stops automatic authority at cap 0 and ramps the cap back to manual over 2 seconds. Temporary GPS rejection/Phase-B/staleness, ordinary heading unavailability and LoRa loss preserve the live F1–F6 declaration, clear all automatic proof and finish in `FM_ARMED`; if the trigger remained held, one release is required before a fresh trigger-independent `>D_engage` proof can begin. Sustained divergence, RETURN runtime/not-closing and a proven compass-vs-COG contradiction finish in `FM_IDLE` and require a deliberate new arm declaration.
 
 While FM is ACTIVE, a manual steering deflection of at least 40 raw counts from centre takes steering
 priority immediately at the 100 Hz PWM layer. FM remains ACTIVE, its separation proof and throttle
@@ -97,9 +98,9 @@ normal rider-relative target; it does not alter steering, lifecycle state or sep
 3. Phase B pass (TX↔RX cross-validation current).
 4. TX GPS age < `tx_gps_stale_timeout_ms`.
 5. RX GPS age < 6000 ms.
-6. Valid heading source from the guarded ladder. A proven compass-vs-COG disagreement withdraws
-   the compass but is not itself an engagement gate: live GPS COG or the short held-COG bridge is
-   sufficient. If that GPS heading is absent, stale or frozen, the condition still fails.
+6. Valid heading source from the guarded ladder. Ordinary temporary loss is recoverable. A proven
+   compass-vs-COG disagreement is a separate terminal trust fault for FM even if live GPS COG or the
+   short held-COG bridge remains available; RTM may still use its bounded degraded behaviour.
 7. LoRa healthy: `millis() − last_packet < failsafe_time`.
 8. Radial separation proven: `dist > effective D_engage` continuously for 2 s. This proof is
    trigger-independent and identical for F1–F6; angles and signed front lead are not activation gates.
@@ -113,7 +114,8 @@ the radius it immediately completes to `FM_ARMED`. A stationary `FM_ARMED` decla
 
 Failure of 1 neither blocks entry into nor exits `FM_ACTIVE`; it only withholds `fm_rx_active`, and no
 cap write is needed because input throttle is already zero.
-Failures 2–7 prevent proof/readiness while ARMED and end an ACTIVE run through STOPPING. Failure of
+Failures 2–7 prevent proof/readiness while ARMED and end an ACTIVE run through STOPPING. Temporary
+availability failures return to ARMED; a heading contradiction is terminal. Failure of
 8 means ARMED/manual. Geometry/front warning checks are not activation or
 fault conditions. Valid signed front geometry is still required to grant F4–F6 uncapped catch-up;
 without it the normal rider-relative target is used. Condition 9 is the explicit cap-0 stop latch.
@@ -150,8 +152,9 @@ only. With no valid rider course, F4–F6 temporarily aim straight ahead on the 
 
 FM writes caps only. The human trigger remains the sole throttle source; trigger release stops the
 buggy through the unchanged base architecture without disarming FM. After FM has seen its first
-throttle input, the TX keeps its mode declaration alive until explicit F0/gesture disarm, an
-RX-reported fault or declaration loss; normal FM Return completion preserves the declaration.
+throttle input, the TX keeps its mode declaration alive until explicit F0/gesture disarm, a
+terminal RX-reported fault or declaration loss. Recoverable RX faults and normal FM Return
+completion preserve the declaration.
 Ordinary trigger release preserves a valid
 separation proof. A trustworthy 2-second stationary proof instead completes every `FM_ACTIVE`
 lifecycle through `FM_RETURN` and clears it, so the next automatic run must again prove
@@ -191,11 +194,13 @@ not used at runtime.
 
 | Failure | Detection | Response |
 |---|---|---|
-| TX (rider) GPS loss | age > `tx_gps_stale_timeout_ms` | cap 0, STOPPING → IDLE, re-arm required |
-| RX GPS loss | age > 6 s | same |
-| Heading source invalid | ladder empty | same |
-| LoRa loss | > `failsafe_time` | PWM pulses stop immediately; FM fault/disarm when control resumes |
+| TX (rider) GPS loss | age > `tx_gps_stale_timeout_ms` | cap 0, STOPPING → ARMED; declaration preserved, proof cleared, release acknowledgement if needed, then fresh `>D_engage` proof |
+| RX GPS loss | age > 6 s | same recoverable path |
+| Heading source temporarily unavailable | ladder empty without a disagreement latch | same recoverable path |
+| LoRa loss | > `failsafe_time` | PWM pulses stop immediately; STOPPING → ARMED when control resumes, with fresh proof required |
+| Compass disagrees with valid GPS COG | sustained guarded contradiction | cap 0, STOPPING → IDLE, deliberate re-arm required |
 | Sustained divergence | distance > effective `fm_diverge_dist_m` for 3 s without closing by more than 2 m (after engage grace) | cap 0, STOPPING → IDLE, re-arm required |
+| FM_RETURN runtime/not-closing | 60 s runtime or no 0.5 m closure over 5 s | cap 0, STOPPING → IDLE, re-arm required |
 | Rider reaches stop radius | dist ≤ `min_dist_m` while ACTIVE and trigger held | cap 0; recovery above `min_dist_m` retains separation proof and resumes through the engage ramp |
 | Rider stationary while ACTIVE | filtered speed < 2 km/h for 2 s with trustworthy position | always enter `FM_RETURN`; outside `D_engage` retrieve, at/inside it immediately complete to `FM_ARMED`; common cleanup clears all lifecycle latches |
 | Rider course invalid | speed < ~5 km/h | F1–F3 use radial hold-station target; F4–F6 go straight on buggy heading and raise warning |

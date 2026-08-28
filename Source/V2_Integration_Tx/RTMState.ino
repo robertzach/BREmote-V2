@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - FM fault telemetry now distinguishes recoverable STOPPING (FAULT+ARMED) from terminal STOPPING (FAULT without ARMED). Recoverable GPS/link/ordinary heading-availability stops show St + Pattern 7 but preserve fm_armed, F1-F6 and the 30 s keepalive; divergence/heading-trust/RETURN convergence faults clear local arm ownership, send F0 and require a deliberate re-arm. The RX keeps a terminal STOPPING ramp authoritative despite that F0, so the 2 s manual-throttle return still completes before IDLE. The packet byte/layout and SW_VERSION remain unchanged.
 // V2.5-Evo - 2026-08-28 - FM Warning Distance is now live: while TX and RX both report FM armed
 // and the link is fresh, reaching telemetry distance >= fm_warn_distance_m queues one medium pulse
 // immediately and every 2 s until the distance falls below the threshold. It shares Pattern 8 with
@@ -193,32 +194,47 @@ static void fmSilentDisarm()
   queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX
 }
 
-// Internal disarm: clears state, notifies RX, shows "St" full-screen, buzzes only on a FAULT.
+// Shared visual/haptic stop acknowledgement. A recoverable RX fault uses this without changing the
+// local F1-F6 declaration; a terminal fault and a commanded disarm apply their state changes first.
+static void fmShowStopConfirm(bool fault)
+{
+  if (fault) vib_stop_pending = true;   // Pattern 7: one long buzz = a FAULT stopped automatic FM
+  DISP_LOCK(); displayDigits(LET_S, LET_T); updateDisplay(); DISP_UNLOCK();
+  gpsKeepAliveDelay(2000);
+}
+
+// Internal disarm: clears state, shows "St" full-screen, and buzzes only on an RX fault.
 // V2.5-Evo - 2026-04-28 - P9 S2: showFmMode() removed; disarm shows blocking stop message.
 // V2.5-Evo - 2026-04-28 - ChgE: fm_last_sync_ms reset to 0 on disarm so keepalive timer clears.
 // INPUT: commanded — true = stay SILENT, false = fire the Pattern 7 STOP buzz. Since the 2026-08-17
 //        revision the test is "FAULT or TIMEOUT", not "did the rider press something": true for the
 //        deliberate disarms (toggle combo, magnet toggle, F0); false only for the RX fault-stop.
-// OUTPUT: none. SIDE EFFECTS: fm_armed cleared, keepalive stopped, 0xF2/0 sent to RX, STOP buzz
-//        requested when uncommanded, and a BLOCKING 2s "St" display hold.
+// OUTPUT: none. SIDE EFFECTS: fm_armed cleared, keepalive stopped, STOP buzz requested when
+//        uncommanded, and a BLOCKING 2s "St" display hold. Both paths send 0xF2/0; the RX explicitly
+//        lets a terminal STOPPING ramp finish before consuming that disarm as FM_IDLE.
 static void fmDisarm(bool commanded)
 {
   fm_armed         = false;
   fm_throttle_seen = false;
   fm_last_sync_ms  = 0;            // Change E: clear keepalive timer
   fmResetWarningScheduler();
-  queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX (followme_mode=0)
+  queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX (terminal ramp still completes)
   // V2.5-Evo - 2026-08-16 - HAPTIC CUT: silent on a DELIBERATE disarm. You just did it, and the
   // display already says so. A buzz confirming your own action is noise.
   // V2.5-Evo - 2026-08-17 - StopBuzz: the caller now decides, on the rule A PURE TIMEOUT IS SILENT,
   // A FAULT BUZZES. Exactly ONE FM path is a fault — the RX fault-stop in runFmLoop(), where the RX
   // gave up steering on its own and the rider has no way to know. Trigger release no longer calls
   // this function at all; it leaves FM armed. Pattern 7 is therefore spent on RX faults only.
-  if (!commanded) vib_stop_pending = true;   // Pattern 7: one long buzz = a FAULT stopped the system
+  fmShowStopConfirm(!commanded);
+}
 
-  // Large-font stop confirm on FM disarm.
-  DISP_LOCK(); displayDigits(LET_S, LET_T); updateDisplay(); DISP_UNLOCK();
-  gpsKeepAliveDelay(2000);
+// Recoverable GPS/link/ordinary heading-availability fault: acknowledge the hard stop but retain
+// fm_armed, the selected F1-F6 mode and its keepalive. The RX has cleared its separation proof and
+// will not rebuild it until a held trigger has been released once.
+static void fmReportRecoverableFault()
+{
+  fmResetWarningScheduler();
+  fmShowStopConfirm(true);
 }
 
 // Called by handleGearToggle() combo (LEFT tap + RIGHT hold 5s) — toggles arm/disarm.
@@ -366,18 +382,14 @@ void runFmLoop()
 {
   unsigned long now = millis();
 
-  // V2.5-Evo - 2026-07-20 - Batch T (Fable FM v1.4): DISARM OWNERSHIP — the display can't lie.
-  // The RX owns engagement; on an RX fault it stops FM and raises fm_flags bit3 (fault-stop),
-  // held sticky ~6s so this ~110ms loop is guaranteed to catch the rising edge across the
-  // ~2.4s telemetry rotation. On that rising edge, while WE still believe we are armed, the TX
-  // must clear its own arm and STOP re-declaring 0xF2/mode — otherwise the 30s keepalive below
-  // would re-arm the RX within 30s of a fault. fmDisarm() does exactly that: fm_armed=false
-  // (so this function early-returns next tick and the keepalive never fires), queues 0xF2/0
-  // (belt-and-suspenders — RX already idle), and shows the stop as "St" + Pattern 7. bit3 is
-  // already surprise-gated on the RX, so it is only set when the alarm is warranted — no TX
-  // re-gating needed. fm_flags_prev is updated every tick (armed or not) so a re-arm starts clean.
+  // The RX owns fault disposition. FM_FLAG_FAULT announces the stop; FM_FLAG_ARMED says whether the
+  // declaration survives it. Temporary GPS/link/heading-availability faults therefore show St +
+  // Pattern 7 but keep F1-F6 and its keepalive. Terminal divergence/heading-trust faults clear the
+  // TX arm and keepalive. A terminal edge is also detected when a second fault changes an already
+  // sticky recoverable notification into a non-armed one.
   uint8_t fm_flags_now = telemetry.fm_flags;
-  bool fault_rising = (fm_flags_now & FM_FLAG_FAULT) && !(fm_flags_prev & FM_FLAG_FAULT);
+  bool recoverable_fault_edge = followMeRecoverableFaultEdge(fm_flags_now, fm_flags_prev);
+  bool terminal_fault_edge = followMeTerminalFaultEdge(fm_flags_now, fm_flags_prev);
   bool done_rising  = (fm_flags_now & FM_FLAG_DONE)  && !(fm_flags_prev & FM_FLAG_DONE);
   fm_flags_prev = fm_flags_now;
   if (fm_armed && done_rising)
@@ -393,13 +405,17 @@ void runFmLoop()
     gpsKeepAliveDelay(1000);
     return;
   }
-  if (fm_armed && fault_rising)
+  if (fm_armed && terminal_fault_edge)
   {
-    // FAULT — and since the 2026-08-17 revision this is the ONLY FM path that buzzes. The RX
-    // faulted and stopped following by itself: the rider asked for nothing, no timer explains it,
-    // and he has no other way to learn the buggy is no longer steering for him. → commanded =
-  // false → Pattern 7. Trigger release itself never enters this path.
-    fmDisarm(false);   // clears fm_armed + keepalive, sends 0xF2/0, "St" + Pattern 7 — TX & RX can't disagree
+    // Terminal FAULT: clear local armed ownership and keepalive, then send F0. The RX keeps its
+    // terminal STOPPING ramp authoritative and consumes the disarm at the final IDLE edge.
+    fmDisarm(false);
+    return;
+  }
+  if (fm_armed && recoverable_fault_edge)
+  {
+    // Recoverable FAULT: alert the rider, retain the declaration and let the RX finish in ARMED.
+    fmReportRecoverableFault();
     return;
   }
 

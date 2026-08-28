@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - Included the native-testable FM fault-disposition decoder: FAULT+ARMED preserves the declaration, FAULT without ARMED is terminal. Existing telemetry layout, config struct and SW_VERSION remain unchanged.
 // V2.5-Evo - 2026-08-17 - defaultConf.rtm_double_squeeze_en 0 → 1: the factory default RTM arm gesture is now the
 //   deliberate double squeeze, which is what the struct comment always documented. Default value + comments only —
 //   confStruct UNCHANGED, sizeof stays 136, SW_VERSION stays 27, no SPIFFS reset, and units with a stored value keep it.
@@ -82,6 +83,7 @@
 #include <Arduino.h>
 #include <atomic>
 #include "../Common/FollowMeDistanceWarning.h"
+#include "../Common/FollowMeFaultTelemetry.h"
 #include "../Common/FollowMeModes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -537,10 +539,10 @@ struct __attribute__((packed)) TelemetryPacket {
 // The RX FM brain assembles this byte; the new TX consumes it to drive the R5 display and the
 // disarm-ownership rule. An OLD TX ignores index 16 entirely (it was a reserved byte).
 // ============================================================
-#define FM_FLAG_ARMED     0x01  // bit0: RX FM armed
+#define FM_FLAG_ARMED     0x01  // bit0: RX declaration armed; also marks recoverable STOPPING
 #define FM_FLAG_ENGAGED   0x02  // bit1: RX FM engaged (actively steering / capping)
 #define FM_FLAG_NOTREADY  0x04  // bit2: RX-side armed-not-ready (separation latch not yet proven)
-#define FM_FLAG_FAULT     0x08  // bit3: RX fault-stop, sticky 6s (already surprise-gated on the RX)
+#define FM_FLAG_FAULT     0x08  // bit3: RX fault-stop, sticky 6s; combine with ARMED for disposition
 #define FM_FLAG_RETURN    0x10  // bit4: RX is in FM_RETURN (trigger may currently pause motion)
 #define FM_FLAG_DONE      0x20  // bit5: legacy RX RETURN->IDLE completion; retained for old-RX compatibility
 #define FM_FLAG_GEOMETRY  0x40  // bit6: radial/separation warning only; RX control is unchanged

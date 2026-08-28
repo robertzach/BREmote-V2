@@ -384,13 +384,14 @@ chop, one-handed, with a foil under you. Learn them dry first.
 
 > ### 📍 Do this outside — and expect a fault if you don't
 >
-> **Indoors you will almost certainly get a fault, and that is the system working correctly.**
+> **Indoors FM will normally remain armed-but-not-ready, and that is the system working correctly.**
 >
-> FM, including FM_RETURN, requires a **trustworthy GPS fix on both units**. Through a roof you will not get
-> one, so the moment you arm, the gate fails and the buggy **STOPS** — `St` on the display plus a
-> long buzz — and you have to re-arm. Nothing is broken. **That is the fault that stops a runaway**,
-> and seeing it once, on the bench, is genuinely worth doing: it teaches you what the failure looks
-> like before you meet it on the water.
+> FM, including FM_RETURN, requires a **trustworthy GPS fix on both units**. Through a roof you will
+> often not get one, so a fresh declaration remains `FM_ARMED` and cannot complete its separation
+> proof. If GPS or radio availability drops during an already ACTIVE/RETURN run, the buggy stops,
+> shows `St` with a long buzz and returns to `FM_ARMED`; release a still-held trigger and provide a
+> fresh outside `>D_engage` proof. Divergence or contradictory heading sensors are the terminal
+> faults that go to `FM_IDLE` and require a new arm gesture.
 >
 > **Then take it outside** where both units can actually see the sky, and do it properly:
 >
@@ -432,7 +433,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 uncapped catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 uncapped catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A temporary GPS/heading-availability/radio dropout is a **recoverable FAULT**: it stops (`St` + long buzz), ramps throttle back to manual and returns to `FM_ARMED`; release a still-held trigger once and establish a fresh `>D_engage` proof. Divergence, failed RETURN convergence/runtime or a compass-vs-COG contradiction instead finish in `FM_IDLE` and require a new arm gesture.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---
@@ -447,7 +448,7 @@ Preconditions to *engage* (you can arm before these are perfect; it won't engage
 3. **Following:** hold the trigger to grant motor and automatic steering authority through the engage ramp. The buggy trails at your set side/distance and only ever moves on **your** throttle; FM only *subtracts* from it. Releasing stops it immediately without leaving `FM_ACTIVE`.
    - Keep your eyes on the wave. Trust line-of-sight — the distance bar/number is an assist and can read ~15 m off up close.
 4. **Stop while ACTIVE →** after 2 seconds below 2 km/h, FM always enters `FM_RETURN` and clears the old lifecycle latches. Outside the engage radius, keep holding the trigger to bring the buggy directly toward you; releasing pauses it. At or inside the effective `fm_engage_dist_m`, RETURN completes immediately without return motion. Both arrival and sustained rider motion exit to `FM_ARMED` with the F1–F6 declaration preserved; neither jumps directly to `FM_ACTIVE` or `FM_IDLE`. Release a still-held trigger once, then establish a fresh 2-second `>D_engage` proof before automatic FM can engage again.
-5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use uncapped catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp. Remaining stationary for 2 seconds completes through the common RETURN cleanup. **Fault →** `St`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
+5. **Geometry/front invalid →** warning every 3 s; FM state and steering continue, but F4–F6 cannot use uncapped catch-up without a valid signed gap and fall back to their normal rider-relative speed target. **At `min_dist_m` →** cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp. Remaining stationary for 2 seconds completes through the common RETURN cleanup. **Temporary GPS/link fault →** `St`, then `FM_ARMED` with release acknowledgement and fresh proof. **Divergence/heading contradiction/RETURN convergence fault →** `St`, `FM_IDLE`, re-arm to continue. To disarm manually, repeat the arm gesture or hold the magnet ~2 s (long buzz = off).
 
 > Before starting a new tow, explicitly disarm FM or select F0. Stationary ACTIVE completion clears
 > its proof through FM_RETURN, but explicit disarm remains the deterministic session boundary.

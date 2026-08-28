@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - FM fault completion is now severity-aware. Temporary GPS rejection/Phase-B/staleness, ordinary heading availability and LoRa failures still hard-stop through FM_STOPPING and its 2 s cap 0->255 manual-return ramp, then preserve the live F1-F6 declaration in FM_ARMED with every automatic proof cleared. A trigger held across the anomaly must be released once before a fresh >D_engage proof can start. Divergence, FM_RETURN runtime/not-closing and a proven compass-vs-COG contradiction remain terminal: STOPPING -> FM_IDLE and deliberate TX re-arm. FM_FLAG_ARMED marks recoverable STOPPING to the TX, so the existing packet byte and SW_VERSION remain unchanged.
 // V2.5-Evo - 2026-08-28 - Follow-Me catch-up no longer applies the configured 25 km/h Boogie V-Max: whenever the radial/signed-gap Schmitt selects catch-up, speed cap 3 is fully open at 255 for F1-F6. Trigger, align cap, engage ramp, hard stop and every fault cap remain independent. Inside the distance-control band the PI governor resumes and boogie_vmax_in_followme_kmh remains its absolute ceiling. F4-F6 now request a station radius of 2 x (min_dist + smoothing band), and their additional steering lookahead is at least another 2 x that base rear-follow radius. The speed governor and steering target share the same doubled front-station helper. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - A trustworthy 2 s stationary proof now routes every FM_ACTIVE session through FM_RETURN regardless of distance. Outside D_engage this is the existing direct retrieval; at/below D_engage the complementary arrival edge immediately runs the shared RETURN -> FM_ARMED cleanup, clearing separation, min-stop, divergence and controller latches without commanding return motion. FM_ARMED still needs dist > D_engage to start RETURN, preventing a stationary near-range ARMED loop. A held trigger retains the existing cap-0 exit interlock. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM alignment is less underpowered and automatic authority builds sooner: kFmAlignCap rises 13 -> 60 counts (60/255, about 24%) while the heading error exceeds rtm_align_threshold_deg, and kFmEngageRampMs falls 3500 -> 1500 ms for both Follow-Me and FM_RETURN. The rider trigger, hard-stop, approach, speed-governor and lowest-cap arbitration remain unchanged. Compile-time tuning only; no config/packet/struct change and SW_VERSION stays 35.
@@ -1060,9 +1061,9 @@ static bool getRtmHeading(float* out_heading, uint8_t* out_confidence)
   //        case above — hold straight, keep running — rather than stopping. Stating it the old way
   //        described a stop that does not happen. The bypass is deliberately NOT narrowed here;
   //        narrowing it is a separate change with its own argument to make.
-  //   FM : condition 6 in checkFmFaultConditions() fails, which is already classified as a FAULT
-  //        — FM_STOPPING, cap 0, ramp back to manual, FM_IDLE, re-arm required. A valid live/held
-  //        COG never reaches this path and remains sufficient for engagement.
+  //   FM : ordinary condition-6 availability loss is a recoverable FAULT — FM_STOPPING, cap 0,
+  //        ramp back to manual, then FM_ARMED with a fresh proof. A separately proven compass-vs-
+  //        COG contradiction is terminal even if live/held COG remains available.
   //
   // THIS IS SELF-CLEARING AND STRICTLY NARROW. It only exists while the buggy is MOVING and the
   // GPS is repeating itself; the instant the course value moves again, or the buggy slows below
@@ -1479,12 +1480,13 @@ static const float    kFmDivergeCloseEpsM    = 2.0f;   // metres of closure over
 //   FM_RETURN  : a stationary rider outside D_engage is retrieved directly. Entry clears the
 //                separation latch. Arrival or sustained rider motion exits to FM_ARMED, never
 //                directly to FM_ACTIVE or FM_IDLE; a fresh >D_engage proof is required.
-//   FM_STOPPING: FM was engaged and a FAULT dropped out - conditions 2-7 (Phase A/B, TX/RX GPS
-//                stale, heading invalid, LoRa). Something actually broke, so autonomy ends for
-//                this run: the throttle cap ramps 0 -> 255 over kFmStopRampMs (throttle always
-//                returns, never a lurch under a held trigger), then FM drops to FM_IDLE and a
-//                fresh TX declaration is required to re-arm. A surprise-gated St + stop buzz fires
-//                (fm_flags bit 3) only if the trigger was held at the fault instant.
+//   FM_STOPPING: FM was engaged and a FAULT dropped out. The throttle cap ramps 0 -> 255 over
+//                kFmStopRampMs so manual throttle returns without a lurch. Temporary GPS/Phase-B/
+//                heading-availability/link losses preserve the declaration and finish in FM_ARMED
+//                with a fresh separation proof; a held trigger must be released once before that
+//                proof may restart. Divergence, RETURN convergence/runtime failure and a proven
+//                compass-vs-COG disagreement are terminal and finish in FM_IDLE, requiring a fresh
+//                TX arm declaration. fm_flags bit 3 announces either kind of surprising stop.
 enum FmState : uint8_t {
   FM_IDLE = 0,
   FM_ARMED = 1,
@@ -1584,9 +1586,21 @@ static unsigned long fm_stop_ms          = 0;
 // entry site below replaces it before publishing FM_STOPPING.
 static uint8_t       fm_stop_block_reason = FM_LOG_BLOCK_STOPPING;
 
-// millis() of the last SURPRISING fault stop (a fault that occurred while the trigger was held).
+// Destination selected at the fault edge. Recoverable GPS/link/ordinary heading-availability
+// failures keep the live F1-F6 declaration; terminal geometry/heading-trust failures do not.
+// While STOPPING, telemetry uses this bit to tell the TX whether its local armed declaration must
+// survive the fault notification.
+static bool          fm_stop_to_armed = false;
+
+// A recoverable fault returns manual throttle during STOPPING, but automatic proof must not rebuild
+// behind a trigger that stayed squeezed throughout the anomaly. The first release acknowledges the
+// stop and opens a completely fresh, trigger-independent >D_engage proof.
+static bool          fm_fault_rearm_requires_release = false;
+
+// millis() of the last fault stop that must reach the TX. Recoverable ACTIVE faults retain the
+// surprise gate (trigger held); terminal faults and every RETURN fault publish regardless of trigger.
 // Drives the sticky fm_flags bit 3 for kFmFaultStickyMs so the TX cannot miss the stop
-// notification across the ~2.4 s telemetry rotation. 0 = no recent surprising fault. Deliberately
+// notification across the ~2.4 s telemetry rotation. 0 = no recent reported fault. Deliberately
 // NOT cleared by fmEnterIdle() — the notification must survive the transition into FM_IDLE.
 static unsigned long fm_fault_alarm_ms   = 0;
 
@@ -1988,10 +2002,18 @@ void runFmNavigationLoop()
   {
     uint8_t f = 0;
     FmState s = fm_state;
-    if (s == FM_ARMED || s == FM_ACTIVE || s == FM_RETURN) f |= FM_FLAG_ARMED;
+    // During a recoverable STOPPING ramp the declaration is still logically armed. Publishing the
+    // bit here lets a matching TX show the fault alert without sending F0; older TX firmware still
+    // disarms, which is a safe compatibility fallback.
+    bool declaration_preserved =
+        (s == FM_ARMED || s == FM_ACTIVE || s == FM_RETURN ||
+         (s == FM_STOPPING && fm_stop_to_armed));
+    if (declaration_preserved) f |= FM_FLAG_ARMED;
     if (fm_rx_active) f |= FM_FLAG_ENGAGED;
-    if ((s == FM_ARMED || (s == FM_ACTIVE && !fm_rx_active)) &&
-        (!fm_sep_latched || fm_min_dist_stop_latched || !fm_heading_available)) {
+    if (((s == FM_ARMED || (s == FM_ACTIVE && !fm_rx_active)) &&
+         (!fm_sep_latched || fm_min_dist_stop_latched || !fm_heading_available ||
+          headingDisagreeLatched())) ||
+        (s == FM_STOPPING && fm_stop_to_armed)) {
       f |= FM_FLAG_NOTREADY;
     }
     if (fm_fault_alarm_ms != 0 && (now - fm_fault_alarm_ms) < kFmFaultStickyMs) f |= FM_FLAG_FAULT;
@@ -2451,8 +2473,10 @@ static void computeFmTarget(double* out_lat, double* out_lng)
 // checkFmFaultConditions - the FM FAULT conditions (2-7)
 // ------------------------------------------------------------
 // What it does (DESIGN_FOLLOW_ME.md section 5, transient-inhibit-vs-fault classification):
-//   Evaluates the six FAULT conditions only. While FM_ARMED they prevent separation proof/readiness;
-//   once FM_ACTIVE they end the run and require a fresh declaration. Two conditions are handled by
+//   Evaluates the six availability FAULT conditions only. While FM_ARMED they prevent separation
+//   proof/readiness; once FM_ACTIVE they end the run through STOPPING and normally return to ARMED
+//   with a fresh proof. The caller separately promotes a proven heading contradiction and divergence
+//   to terminal faults requiring a fresh declaration. Two conditions are handled by
 //   the CALLER, not here, because they are not faults:
 //     - Condition 1 (throttle >= 25) is the DEADMAN. A trigger release is never a fault (treating
 //       it as one would end FM on every release, worse than the original bug); the caller reads it
@@ -2883,6 +2907,8 @@ static void fmEnterIdle()
   // stay sticky for kFmFaultStickyMs even after FM has dropped into FM_IDLE.
   fm_stop_ms           = 0;
   fm_stop_block_reason = FM_LOG_BLOCK_STOPPING;
+  fm_stop_to_armed     = false;
+  fm_fault_rearm_requires_release = false;
 
   // V2.5-Evo - 2026-07-25 - A3: leaving FM drops any part-accumulated divergence proof with it, so
   // the next engagement starts its 3 s window from scratch rather than inheriting a stale timer.
@@ -2979,11 +3005,17 @@ static bool fmReturnPositionOk(unsigned long now)
 }
 
 // RTM-equivalent safety gates for the return drive, without RTM's obsolete activation state or
-// fixed stop radius. A heading may be absent only when the existing advanced gate permits it (or
-// a proven compass disagreement has withdrawn the compass); updateRtmSteering then holds straight
-// and the align cap limits throttle to ~24% until a trustworthy GPS course appears.
+// fixed stop radius. A proven compass disagreement is terminal for FM_RETURN. Ordinary temporary
+// heading absence follows the configured advanced gate; updateRtmSteering then holds straight and
+// the align cap limits throttle to ~24% until a trustworthy GPS course appears.
 static bool fmReturnFaultOk(unsigned long now)
 {
+  // A proven compass-vs-COG contradiction is a trust fault, not ordinary temporary heading loss.
+  // It remains terminal even when a live COG could otherwise keep the direct-return ladder alive.
+  if (headingDisagreeLatched()) {
+    fm_diag_block_reason = FM_LOG_BLOCK_HEADING_DISAGREE;
+    return false;
+  }
   if (gps_rejected) {
     fm_diag_block_reason = FM_LOG_BLOCK_GPS_REJECTED;
     return false;
@@ -3071,6 +3103,24 @@ static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned
   return (uint8_t)cap;
 }
 
+// Temporary sensor/link availability failures may preserve the rider's F1-F6 declaration. Every
+// geometry/convergence failure and every sensor-trust contradiction is terminal by default; adding
+// a new fault reason therefore cannot accidentally opt itself into automatic recovery.
+static bool fmFaultRecoversToArmed(FmLogBlockReason block_reason)
+{
+  switch (block_reason) {
+    case FM_LOG_BLOCK_GPS_REJECTED:
+    case FM_LOG_BLOCK_PHASE_B:
+    case FM_LOG_BLOCK_TX_GPS_STALE:
+    case FM_LOG_BLOCK_RX_GPS_STALE:
+    case FM_LOG_BLOCK_NO_HEADING:
+    case FM_LOG_BLOCK_LINK:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static void fmReturnFaultStop(unsigned long now, FmLogBlockReason block_reason,
                               const char *reason, bool thr_held)
 {
@@ -3081,15 +3131,16 @@ static void fmReturnFaultStop(unsigned long now, FmLogBlockReason block_reason,
   fm_front_warning    = false;
   fm_min_dist_stop_latched = false;
   // A RETURN fault must always reach the TX, even if it happens during a trigger-release pause.
-  // Otherwise the TX keeps sending its old 0xF2 declaration and can silently re-arm the RX after
-  // STOPPING. The fault flag is therefore also the declaration-ownership acknowledgement here.
+  // FM_FLAG_ARMED simultaneously tells the TX whether this stop preserves the declaration.
   fm_fault_alarm_ms = now;
   fm_stop_ms           = now;
   fm_stop_block_reason = (uint8_t)block_reason;
+  fm_stop_to_armed     = fmFaultRecoversToArmed(block_reason);
   fm_diag_block_reason = fm_stop_block_reason;
   fm_state             = FM_STOPPING;
   fmResetSpeedGovernor();
-  Serial.printf("FM [RX] RETURN FAULT -> STOPPING: %s (thr_held=%d)\n", reason, (int)thr_held);
+  Serial.printf("FM [RX] RETURN FAULT -> STOPPING -> %s: %s (thr_held=%d)\n",
+                fm_stop_to_armed ? "ARMED" : "IDLE/re-arm", reason, (int)thr_held);
 }
 
 // Normal RETURN exit. Arrival and moving-rider cancellation share one deterministic destination:
@@ -3129,6 +3180,44 @@ static void fmExitReturnToArmed()
 
   fm_return_exit_hold = (thr_received >= 25);
   if (!fm_return_exit_hold) fm_throttle_cap = 255;
+}
+
+// Complete a recoverable GPS/link stop without discarding the live TX declaration. The fault ramp
+// has already restored manual throttle gradually. All automatic lifecycle evidence is cleared so
+// the old ACTIVE/RETURN run cannot resume; a held trigger must be released once before a new radial
+// proof may start.
+static void fmFinishRecoverableStopToArmed()
+{
+  fm_rx_active       = false;
+  rtm_steer_override = 127;
+  fm_throttle_cap    = 255;
+
+  fm_state                 = FM_ARMED;
+  fm_sep_latched           = false;
+  fm_sep_over_since_ms     = 0;
+  fm_min_dist_stop_latched = false;
+  fm_return_candidate_since_ms = 0;
+  fm_return_start_ms            = 0;
+  fm_return_resume_since_ms     = 0;
+  fm_return_check_ms            = 0;
+  fm_return_prev_dist_m         = -1.0f;
+  fm_geometry_warning           = false;
+  fm_front_warning              = false;
+  fm_diagonal_engaged           = false;
+  fm_engage_ms                  = 0;
+  fm_diverge_since_ms           = 0;
+  fm_diverge_start_dist_m       = -1.0f;
+  fm_fault_rearm_requires_release = (thr_received >= 25);
+  fm_stop_ms                    = 0;
+  fm_stop_block_reason          = FM_LOG_BLOCK_STOPPING;
+  fm_stop_to_armed              = false;
+  fmResetSpeedGovernor();
+
+  prev_heading_error_deg  = 0.0f;
+  prev_heading_src_valid  = false;
+  prev_steering_update_ms = 0;
+  g_heading_error_dx10    = 0x7FFF;
+  g_d_error_dx10          = 0x7FFF;
 }
 
 // ------------------------------------------------------------
@@ -3189,6 +3278,19 @@ void runFmLoop()
     Serial.println("FM [RX] RETURN exit throttle interlock released -> FM_ARMED/manual; fresh >D_engage proof required");
   }
 
+  // A recoverable fault has already handed manual throttle back through the 2 s ramp, so this
+  // acknowledgement interlock must not cap it again. It only prevents the trigger-independent
+  // separation proof from rebuilding until the rider has released the trigger once.
+  if (fm_fault_rearm_requires_release) {
+    fm_diag_block_reason = FM_LOG_BLOCK_FAULT_RELEASE_HOLD;
+    fm_rx_active       = false;
+    rtm_steer_override = 127;
+    fm_throttle_cap    = 255;
+    if (thr_received >= 25) return;
+    fm_fault_rearm_requires_release = false;
+    Serial.println("FM [RX] recoverable fault acknowledged by trigger release -> FM_ARMED; fresh >D_engage proof required");
+  }
+
   // Keep the rider filter and derived motion warm on every tick, in every state, so the
   // instant the conditions are met we already have a trustworthy course and speed.
   updateFmRiderTracking();
@@ -3204,6 +3306,7 @@ void runFmLoop()
   // it is the value the TX's arm gesture SEEDS from (TX RTMState.ino). It is never again an
   // RX-side auto-arm source. Autonomous steering now always requires a live human declaration.
   uint8_t m = fm_mode_runtime.load(std::memory_order_relaxed);
+  bool terminal_stop_owns_ramp = (fm_state == FM_STOPPING && !fm_stop_to_armed);
 
   // ---- R2(b): expire a declaration nobody is refreshing ----
   // The TX re-sends 0xF2/mode every 30 s while armed. If no refresh has arrived for
@@ -3216,13 +3319,18 @@ void runFmLoop()
       fm_diag_block_reason = FM_LOG_BLOCK_MODE_EXPIRED;
       Serial.println("FM [RX] mode declaration expired (no 0xF2 refresh) -> IDLE");
       fm_mode_runtime.store(0xFF, std::memory_order_relaxed);
-      fmEnterIdle();
-      return;
+      m = 0xFF;
+      if (!terminal_stop_owns_ramp) {
+        fmEnterIdle();
+        return;
+      }
     }
   }
 
   // ---- FM_IDLE: FM off / never declared (0xFF), or GPS/FM disabled ----
-  if (!usrConf.gps_en || !usrConf.rtm_rx_enabled || m < 1 || m > 6) {
+  bool config_disabled = !usrConf.gps_en || !usrConf.rtm_rx_enabled;
+  bool declaration_missing = m < 1 || m > 6;
+  if (config_disabled || (declaration_missing && !terminal_stop_owns_ramp)) {
     fm_diag_block_reason = (!usrConf.gps_en || !usrConf.rtm_rx_enabled)
         ? FM_LOG_BLOCK_CONFIG_DISABLED : FM_LOG_BLOCK_NO_DECLARATION;
     fmEnterIdle();
@@ -3270,15 +3378,14 @@ void runFmLoop()
     heading_disagree_last_seen_ms = 0;
   }
 
-  // ---- FM_STOPPING: a FAULT ended FM; ramp throttle back to manual, then go IDLE (A3) ----
-  // V2.5-Evo - 2026-07-20 - A3 FAULT semantics. Once a fault has stopped FM this run, autonomy is
-  // over until a fresh declaration. We do NOT re-check the conditions here: even if the fault
-  // clears mid-ramp, FM stays down and requires re-arm (silent resume after an anomaly is exactly
-  // the unrequested autonomy this architecture forbids). We only ramp the throttle cap back up so
-  // the rider regains manual control smoothly, then drop to FM_IDLE.
+  // ---- FM_STOPPING: a FAULT ended FM; ramp throttle back to manual, then use its latched policy ----
+  // We do NOT re-check conditions during the ramp. Temporary GPS/link/heading-availability faults
+  // finish in ARMED with every automatic proof cleared and a release acknowledgement; divergence,
+  // RETURN convergence/runtime and heading-source contradiction finish in IDLE and require re-arm.
   // MOTOR SAFETY: the cap only ever RISES toward 255 (subtract-only, never adds throttle); the
   // rider's held trigger stays the sole throttle source, and starting the ramp from 0 means no
-  // lurch. (RTM preemption / GPS-off / mode-off above still abort straight to IDLE.)
+  // lurch. GPS/config disable still aborts straight to IDLE; terminal TX F0 is held until the ramp
+  // completes, while an older TX disarming a recoverable fault remains a safe immediate-IDLE fallback.
   if (fm_state == FM_STOPPING) {
     // State and cause are separate facts: fm_state already says STOPPING, while the reason column
     // keeps the input latched at the transition so every logger sample in the ramp explains why.
@@ -3289,9 +3396,16 @@ void runFmLoop()
     fm_front_warning    = false;
     unsigned long stop_elapsed = now - fm_stop_ms;
     if (stop_elapsed >= kFmStopRampMs) {
-      // Ramp done: require a fresh TX declaration to re-arm (mirror the mode-age expiry path so the
-      // TX must re-send 0xF2/mode; the TX also learns of the fault via fm_flags and clears its own
-      // fm_armed - see runRtmLoop's fm_flags bit 3).
+      if (fm_stop_to_armed) {
+        fmFinishRecoverableStopToArmed();
+        Serial.printf("FM [RX] recoverable fault ramp complete -> FM_ARMED%s; separation latch cleared\n",
+                      fm_fault_rearm_requires_release
+                          ? "; proof blocked until trigger release" : "");
+        return;
+      }
+
+      // Terminal fault: mirror mode-age expiry. A matching TX has already cleared its local arm and
+      // sent F0; the terminal_stop_owns_ramp gate above prevents that packet bypassing this ramp.
       fm_mode_runtime.store(0xFF, std::memory_order_relaxed);
       fmEnterIdle();
       return;
@@ -3326,7 +3440,17 @@ void runFmLoop()
   // Preserve checkFmFaultConditions()' exact first failure before the primary display reason below
   // can legitimately become "trigger" on a released-deadman tick. A fault detected after release
   // must still carry its sensor/link cause into STOPPING even though it is not surprise-haptic.
-  uint8_t fault_block_reason = fault_ok ? FM_LOG_BLOCK_NONE : fm_diag_block_reason;
+  uint8_t fault_block_reason = fault_ok
+      ? (uint8_t)FM_LOG_BLOCK_NONE : fm_diag_block_reason;
+  // Availability loss is recoverable; two simultaneously valid heading sources proving each other
+  // inconsistent is not. It dominates any same-tick availability symptom and remains terminal even
+  // when live GPS COG could otherwise supply a steering value.
+  bool heading_trust_fault = headingDisagreeLatched();
+  if (heading_trust_fault) {
+    fault_ok = false;
+    fault_block_reason = FM_LOG_BLOCK_HEADING_DISAGREE;
+    fm_diag_block_reason = FM_LOG_BLOCK_HEADING_DISAGREE;
+  }
   bool  authority_ok = thr_held && fault_ok;   // final gate for actual automatic authority
   bool  was_controlling = fm_rx_active.load(std::memory_order_relaxed);
   bool  active_session  = (fm_state == FM_ACTIVE);
@@ -3706,9 +3830,8 @@ void runFmLoop()
   // clears on radial recovery or when the common stationary RETURN transition resets the lifecycle.
   // V2.5-Evo - 2026-07-25 - A3: !diverge_fault joins the same AND chain. It can only ever REMOVE
   // eligibility, so the worst case of a false positive is FM handing control back to the rider.
-  // A heading-disagreement latch is diagnostic state, not an eligibility term. getRtmHeading()
-  // has already removed the compass and returns true only for valid live/held GPS COG. Therefore
-  // fault_ok continues to enforce a real heading without making compass agreement an extra gate.
+  // A proven heading disagreement is a terminal trust fault even if live COG exists; ordinary
+  // temporary heading unavailability remains a recoverable condition-6 stop.
   // Lifecycle readiness deliberately excludes the trigger; only actual automatic authority adds it.
   bool lifecycle_ready = followMeLifecycleReady(
       fault_ok, return_proof_wait, fm_sep_latched,
@@ -3791,25 +3914,27 @@ void runFmLoop()
     rtm_steer_override = 127;   // hand steering straight back to the rider
     fm_engage_ms       = 0;     // any re-engagement ramps from zero again
 
-    // A proven compass disagreement is absent here by design: it has already degraded the heading
-    // ladder to GPS COG. Only an actual condition-2..7 failure (including no valid COG/hold) or the
-    // divergence fault ends an ACTIVE session.
+    // A condition-2..7 availability failure, a proven compass-vs-COG trust contradiction or the
+    // divergence fault ends an ACTIVE session. The initiating reason selects ARMED vs IDLE only
+    // after the common cap-0 stop and manual-return ramp.
     if ((!fault_ok || diverge_fault) && active_session) {
       // ---- FAULT (conditions 2-7, plus A3 divergence): something broke in the ACTIVE lifecycle ----
       // End autonomy for the run: enter FM_STOPPING, which ramps the throttle cap 0 -> 255 over the
-      // next kFmStopRampMs (handled at the top of runFmLoop), then drops to FM_IDLE — re-arm
-      // required. Fire the stop notification (sticky fm_flags bit 3, drives St + stop buzz on the
-      // TX) only if the trigger was held at this instant — a fault after release is not surprising,
-      // and the bar going dark carries it.
+      // next kFmStopRampMs. Temporary GPS/link/heading availability failures then preserve ARMED;
+      // divergence and heading contradiction drop to IDLE. Terminal faults always reach the TX so
+      // it cannot keep a declaration alive; recoverable faults keep the old surprise-haptic gate.
       // R4: heading loss is one of these faults now.
       // V2.5-Evo - 2026-07-25 - A3: sustained divergence enters through THIS branch and no other, so
       // it inherits the proven fault semantics unchanged — hard stop to cap 0 now, the same ramp back
       // to manual, the same haptic/St notification, and the same mandatory re-arm. The dwell is
       // parked while the rider deliberately holds manual steering, so this classifier judges FM's
       // own convergence only after automatic steering has resumed.
-      if (thr_held) fm_fault_alarm_ms = now;
       fm_stop_ms           = now;
-      fm_stop_block_reason = diverge_fault ? FM_LOG_BLOCK_DIVERGENCE : fault_block_reason;
+      fm_stop_block_reason = diverge_fault
+          ? (uint8_t)FM_LOG_BLOCK_DIVERGENCE : fault_block_reason;
+      fm_stop_to_armed     = fmFaultRecoversToArmed(
+          (FmLogBlockReason)fm_stop_block_reason);
+      if (thr_held || !fm_stop_to_armed) fm_fault_alarm_ms = now;
       fm_diag_block_reason = fm_stop_block_reason;
       fm_state             = FM_STOPPING;
       fm_min_dist_stop_latched = false;
@@ -3823,8 +3948,10 @@ void runFmLoop()
                       (double)dist_m, (double)diverge_start_m, (double)kFmDivergeCloseEpsM,
                       (double)diverge_limit_m, (unsigned long)kFmDivergeMs);
       }
-      Serial.printf("FM [RX] FAULT -> STOPPING (ramp %lu ms) -> IDLE, re-arm required (thr_held=%d)\n",
-                    (unsigned long)kFmStopRampMs, (int)thr_held);
+      Serial.printf("FM [RX] FAULT -> STOPPING (ramp %lu ms) -> %s (thr_held=%d)\n",
+                    (unsigned long)kFmStopRampMs,
+                    fm_stop_to_armed ? "ARMED, fresh proof" : "IDLE, re-arm required",
+                    (int)thr_held);
     } else if (followMeActiveLifecycle(active_session, lifecycle_ready)) {
       // ---- FM_ACTIVE without automatic authority; may be a fresh lifecycle edge from FM_ARMED ----
       // A freshly completed separation proof can enter here directly from FM_ARMED with the trigger

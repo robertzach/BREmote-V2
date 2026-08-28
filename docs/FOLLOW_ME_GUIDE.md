@@ -178,12 +178,15 @@ Not every interruption is the same. Follow-Me tells them apart:
 | **`min_dist_m` is reached** | recoverable stop | cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp; 2 s stationary uses the common RETURN cleanup | only stationary completion needs a new `>D_engage` proof |
 | **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
 | **F4–F6 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
-| **GPS heading/position or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
-| **Compass disagrees with valid GPS COG** | GPS-only degradation | compass is excluded; FM may engage/continue on live or briefly held COG | **no** |
+| **GPS position/heading availability or radio drops out** | recoverable **FAULT** | **stops** → shows `St`, throttle returns, declaration stays `FM_ARMED`; release a still-held trigger and establish a fresh `>D_engage` proof | fresh proof, but no new arm gesture |
+| **Compass disagrees with valid GPS COG** | terminal trust **FAULT** | cap 0, STOPPING → `FM_IDLE`; explicit arm gesture required after checking the sensors | **yes** |
+| **Divergence or failed RETURN convergence/runtime** | terminal control **FAULT** | cap 0, STOPPING → `FM_IDLE` | **yes** |
 
 The 3-second geometry warning continues even when the trigger is released and never changes the
-control path. A real sensor/link failure is different: FM steps fully out and waits for a deliberate
-re-arm, so autonomy never silently restarts after a fault.
+control path. A temporary sensor/link availability fault clears the old lifecycle proof and cannot
+restart behind a continuously held trigger: first release it, then FM needs a new 2-second radial
+proof. Divergence, RETURN convergence failure and contradictory heading sensors step fully out and
+wait for a deliberate re-arm.
 
 ### FM_RETURN — return after you stop
 
@@ -291,7 +294,7 @@ hands steering back to FM. This is a direct takeover, not continuous target-angl
 1. The buggy moves only while you hold the throttle trigger.
 2. Follow-Me only steers and only reduces throttle — never adds.
 3. Releasing the trigger stops the buggy at the hardware level, in every mode.
-4. Manual steering has priority while deliberately deflected; genuine GPS-heading/position or radio faults still end FM. Compass disagreement alone degrades to GPS COG.
+4. Manual steering has priority while deliberately deflected. Temporary GPS/radio availability faults stop the run and return to `FM_ARMED` with a fresh proof; divergence or compass-vs-COG contradiction disarms to `FM_IDLE`.
 5. FM_RETURN is a guarded Follow-Me state; there is no separate RTM gesture or mode.
 
 *See `BUGGY_FOIL_DOMAIN.md` for the domain model and `DESIGN_FOLLOW_ME.md` for the full

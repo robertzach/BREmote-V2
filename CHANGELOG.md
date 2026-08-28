@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-28 — Recoverable FM faults return to ARMED
+
+`FM_STOPPING` now has a latched destination. Temporary GPS rejection/Phase-B/staleness, ordinary
+heading availability and LoRa failures retain the live F1–F6 declaration after the existing cap-0
+hard stop and 2-second ramp back to manual throttle. They finish in `FM_ARMED` with separation,
+min-stop, RETURN, divergence and controller evidence cleared. If the trigger remained held through
+the anomaly, manual throttle is available after the ramp but a release acknowledgement is required
+before a fresh trigger-independent `>D_engage` proof can begin.
+
+Sustained divergence, FM_RETURN runtime/not-closing and a proven compass-vs-GPS-COG contradiction
+remain terminal: `FM_STOPPING → FM_IDLE`, TX arm ownership and keepalive are cleared, and the rider
+must deliberately re-arm. The TX decodes the disposition from the existing combination of
+`FM_FLAG_FAULT` and `FM_FLAG_ARMED`. Terminal handling clears the TX declaration with F0, while the
+RX keeps its already-running STOPPING ramp authoritative until manual-throttle return is complete.
+No telemetry byte, packet size, config layout or SW version changed.
+
 ## 2026-08-28 — FM Warning Distance is live
 
 The existing TX `fm_warn_distance_m` slot now drives a real Follow-Me separation warning. Once TX

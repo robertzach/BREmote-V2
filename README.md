@@ -538,6 +538,13 @@ do not require the trigger to be held. `FM_ACTIVE` can therefore mean ready whil
 automatic steering are still off. When the trigger is pulled, RX grants actual automatic authority
 through its safe controller reset and engage ramp.
 
+An ACTIVE/RETURN GPS, Phase-B, ordinary heading-availability or LoRa fault still hard-stops at cap 0
+and uses the 2-second `FM_STOPPING` ramp back to manual throttle, but then preserves F1–F6 and enters
+`FM_ARMED` with all automatic proof cleared. A trigger held across the fault must be released once
+before the fresh `>D_engage` proof can start. Sustained divergence, RETURN runtime/not-closing and a
+proven compass-vs-GPS-COG contradiction remain terminal: they finish in `FM_IDLE`, clear the TX arm
+ownership and require an explicit new arm gesture.
+
 ### Modes
 
 | Display | `followme_mode` value | Behaviour |

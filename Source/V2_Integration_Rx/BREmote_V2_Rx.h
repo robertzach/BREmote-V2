@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - FM fault completion distinguishes recoverable STOPPING -> ARMED from terminal STOPPING -> IDLE using the existing FM_FLAG_ARMED bit alongside sticky FM_FLAG_FAULT. Added one append-only Deep-log reason for the post-fault trigger-release acknowledgement; no packet/config/struct/SW_VERSION change.
 // V2.5-Evo - 2026-08-28 - Added the shared, native-testable FollowMeActivation predicates. They separate trigger-independent radial proof/lifecycle readiness from held-trigger automatic authority without changing config, packets, struct layout or SW_VERSION.
 // V2.5-Evo - 2026-08-27 - Deep logs append a 13-byte heading-evidence audit after the existing 83-byte FM audit record: configured heading mode, compass-vs-COG difference, set/clear dwell progress, last-good-COG and compass-snapshot ages, plus twelve raw validity/evidence flags. The BRLG record_size keeps 65-byte and 83-byte Deep files readable with their matching historical CSV headers. Instrumentation only; no control/config/packet/SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Throttle-dependent steering without a config reset: retired foiler_low_speed_kmh float renamed in place to steer_full_throttle_pct and rsvd_u16_1 renamed in place to steer_reduction_start_pct. Defaults 35%/50%; cfgValidateCrossField() migrates legacy values before validation. PWM applies the smoothstep curve after manual/FM arbitration using effective throttle, so manual riding and automatic FM share the same rollover protection. Types, offsets, sizeof(confStruct)==192 and SW_VERSION 35 are unchanged.
@@ -1075,12 +1076,13 @@ enum FmLogBlockReason : uint8_t {
   FM_LOG_BLOCK_RETURN_CANDIDATE,
   FM_LOG_BLOCK_RETURN_ACTIVE,
   FM_LOG_BLOCK_MIN_DIST_STOP,
-  FM_LOG_BLOCK_HEADING_DISAGREE,  // legacy CSV decoder only; current FM reports NO_HEADING + warning bit
+  FM_LOG_BLOCK_HEADING_DISAGREE,
   FM_LOG_BLOCK_DIVERGENCE,
   FM_LOG_BLOCK_UNKNOWN,
   // Appended values preserve the numeric meaning of every reason already stored in Deep logs.
   FM_LOG_BLOCK_RETURN_RUNTIME,
-  FM_LOG_BLOCK_RETURN_NOT_CLOSING
+  FM_LOG_BLOCK_RETURN_NOT_CLOSING,
+  FM_LOG_BLOCK_FAULT_RELEASE_HOLD
 };
 
 // Runtime copy passed from the loop-task FM controller to the logger task. This is deliberately
@@ -1225,6 +1227,7 @@ static inline const char* fmLogBlockReasonText(uint8_t reason)
     case FM_LOG_BLOCK_DIVERGENCE:        return "divergence";
     case FM_LOG_BLOCK_RETURN_RUNTIME:    return "return_runtime";
     case FM_LOG_BLOCK_RETURN_NOT_CLOSING: return "return_not_closing";
+    case FM_LOG_BLOCK_FAULT_RELEASE_HOLD: return "fault_release_hold";
     default:                             return "unknown";
   }
 }
@@ -1422,10 +1425,10 @@ inline void webCfgNotifyRxConnected() {}  // No-op stub when WiFi disabled
 // V2.5-Evo - 2026-05-16 - feat(telemetry): expand LoRa packet 8→19 bytes + 0xF4 aux meta-packet
 //Telemetry to send, MUST BE 8-bit!!
 // V2.5-Evo - 2026-04-27 - P8: rtm_distance at index 5; encoding: 0-99=tenths of m, 100-254=(value-90) whole m, 255=N/A.
-#define FM_FLAG_ARMED        0x01
+#define FM_FLAG_ARMED        0x01  // declaration armed; also marks recoverable STOPPING
 #define FM_FLAG_ENGAGED      0x02
 #define FM_FLAG_NOTREADY     0x04
-#define FM_FLAG_FAULT        0x08
+#define FM_FLAG_FAULT        0x08  // sticky fault-stop; combine with ARMED for disposition
 #define FM_FLAG_RETURN       0x10
 #define FM_FLAG_DONE         0x20  // reserved: legacy RETURN->IDLE completion bit; current RX does not emit
 #define FM_FLAG_GEOMETRY     0x40  // radial/separation geometry warning only; no control effect
