@@ -1,3 +1,8 @@
+// V2.5-Evo - 2026-08-28 - FM Warning Distance is now live: while TX and RX both report FM armed
+// and the link is fresh, reaching telemetry distance >= fm_warn_distance_m queues one medium pulse
+// immediately and every 2 s until the distance falls below the threshold. It shares Pattern 8 with
+// the existing geometry warning so simultaneous informational conditions do not create overlapping
+// buzz streams. The config slot and packet byte already existed; no layout or SW_VERSION change.
 // V2.5-Evo - 2026-08-28 - While FM is armed and the trigger is released, LEFT/RIGHT hold now steps backwards/forwards through F1-F6 after 2 s and repeats every 2 s. F0 is excluded from this selector and remains an explicit combo-disarm action. Each step is transmitted immediately; no config, packet or SW_VERSION change.
 // V2.5-Evo - 2026-08-27 - Follow-Me front family expanded to F4 Front-Left, F5 Front and F6 Front-Right. Both gesture cycles, starting-mode validation and display/meta declarations accept 1-6. The existing 0xF2 byte carries the values unchanged, so there is no packet or confStruct change and SW_VERSION stays 27.
 // V2.5-Evo - 2026-08-26 - FM trigger release no longer disarms the TX. Once the rider has applied throttle, the selected 0xF2 mode declaration and its 30 s keepalive persist until explicit FM/F0 disarm, RTM preemption, an RX-reported fault or declaration loss. The existing fm_arm_window_s timeout still applies before the first throttle input. No config/packet/struct change; SW_VERSION stays 27.
@@ -124,18 +129,24 @@ bool isFmArmed() { return fm_armed; }
 // starts from a fresh baseline (no stale edge). RAM only.
 static uint8_t fm_flags_prev = 0;
 
-// RX geometry warnings use the two free high bits of fm_flags. They are conditions, not FM
-// lifecycle states, and repeat even with the trigger released. They never imply that RX changed
-// steering authority or cap. Pattern 8 is queued immediately on an edge and every 3 s
-// thereafter; higher-priority haptics defer rather than consume a due warning.
+// RX geometry warnings use the two free high bits of fm_flags. The TX-side distance threshold uses
+// a synthetic ninth bit in this local warning mask; it changes no packet. All are conditions, not
+// lifecycle states, and repeat even with the trigger released. Pattern 8 is queued immediately on
+// an edge, then every 2 s while the distance condition is present or every 3 s for geometry alone.
+// One shared scheduler prevents simultaneous conditions from creating overlapping buzz streams;
+// higher-priority haptics defer rather than consume a due warning.
+static const uint16_t      kFmDistanceWarningMask     = 0x0100u;
+static const unsigned long kFmDistanceWarningPeriodMs = 2000UL;
 static const unsigned long kFmGeometryWarningPeriodMs = 3000UL;
-static unsigned long fm_geometry_warning_last_ms = 0;
-static uint8_t       fm_geometry_warning_prev    = 0;
+static unsigned long fm_warning_last_ms = 0;
+static uint16_t      fm_warning_prev    = 0;
+static bool          fm_warning_sent    = false;
 
-static void fmResetGeometryWarningScheduler()
+static void fmResetWarningScheduler()
 {
-  fm_geometry_warning_last_ms = 0;
-  fm_geometry_warning_prev    = 0;
+  fm_warning_last_ms = 0;
+  fm_warning_prev    = 0;
+  fm_warning_sent    = false;
 }
 
 // ============================================================
@@ -178,7 +189,7 @@ static void fmSilentDisarm()
   fm_armed         = false;
   fm_throttle_seen = false;
   fm_last_sync_ms  = 0;
-  fmResetGeometryWarningScheduler();
+  fmResetWarningScheduler();
   queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX
 }
 
@@ -195,7 +206,7 @@ static void fmDisarm(bool commanded)
   fm_armed         = false;
   fm_throttle_seen = false;
   fm_last_sync_ms  = 0;            // Change E: clear keepalive timer
-  fmResetGeometryWarningScheduler();
+  fmResetWarningScheduler();
   queueMetaPacketBurst(0xF2, 0);   // mode 0 = FM disabled on RX (followme_mode=0)
   // V2.5-Evo - 2026-08-16 - HAPTIC CUT: silent on a DELIBERATE disarm. You just did it, and the
   // display already says so. A buzz confirming your own action is noise.
@@ -376,7 +387,7 @@ void runFmLoop()
     fm_armed         = false;
     fm_throttle_seen = false;
     fm_last_sync_ms  = 0;
-    fmResetGeometryWarningScheduler();
+    fmResetWarningScheduler();
     queueMetaPacketBurst(0xF2, 0);
     DISP_LOCK(); displayDigits(LET_I, LET_D); updateDisplay(); DISP_UNLOCK();
     gpsKeepAliveDelay(1000);
@@ -394,31 +405,47 @@ void runFmLoop()
 
   if (!fm_armed)
   {
-    fmResetGeometryWarningScheduler();
+    fmResetWarningScheduler();
     return;
   }
 
-  // Periodic FM geometry warning. This intentionally has NO throttle gate: once RX reports that
-  // RX sees invalid radial/front geometry, the rider gets one medium pulse immediately and every
-  // three seconds until RX clears the condition. Pattern 8 is informational and never
-  // overwrites a fault/stop or another pattern already in progress.
-  uint8_t geometry_warning_now = fm_flags_now & (FM_FLAG_GEOMETRY | FM_FLAG_FRONT_LOST);
-  if (!(fm_flags_now & FM_FLAG_ARMED)) geometry_warning_now = 0;
-  if (geometry_warning_now == 0)
+  // Periodic FM warnings intentionally have NO throttle gate: trigger release withdraws automatic
+  // authority, but it must not hide excessive separation or bad geometry. Distance requires a
+  // fresh link and matching TX/RX armed state. Geometry is already owned by the RX fm_flags.
+  // Pattern 8 is informational and never overwrites a fault/stop or another pattern in progress.
+  const bool link_fresh = last_packet != 0 && (now - last_packet) < FM_LINK_HEALTHY_MS;
+  const bool distance_warning_now = followMeDistanceWarningActive(
+      fm_armed,
+      (fm_flags_now & FM_FLAG_ARMED) != 0,
+      link_fresh,
+      telemetry.rtm_distance,
+      usrConf.fm_warn_distance_m);
+
+  uint16_t warning_now = fm_flags_now & (FM_FLAG_GEOMETRY | FM_FLAG_FRONT_LOST);
+  if (!(fm_flags_now & FM_FLAG_ARMED)) warning_now = 0;
+  if (distance_warning_now) warning_now |= kFmDistanceWarningMask;
+
+  if (warning_now == 0)
   {
-    fmResetGeometryWarningScheduler();
+    fmResetWarningScheduler();
   }
   else
   {
-    bool warning_changed = (geometry_warning_now != fm_geometry_warning_prev);
-    bool warning_due = warning_changed || fm_geometry_warning_last_ms == 0 ||
-        (now - fm_geometry_warning_last_ms) >= kFmGeometryWarningPeriodMs;
+    const unsigned long warning_period_ms = distance_warning_now
+        ? kFmDistanceWarningPeriodMs
+        : kFmGeometryWarningPeriodMs;
+    const bool warning_changed = warning_now != fm_warning_prev;
+    const bool warning_due = warning_changed || followMeWarningPulseDue(
+        true, fm_warning_sent, fm_warning_last_ms, now, warning_period_ms);
     if (warning_due && current_vib_pattern == 0 && !vib_stop_pending)
     {
       current_vib_pattern = 8;  // one medium pulse; implemented in vibrationTask()
-      fm_geometry_warning_last_ms = now;
+      fm_warning_last_ms = now;
+      fm_warning_sent = true;
+      // Advance the observed mask only after a pulse was really queued. If another haptic is busy,
+      // leaving the old mask in place preserves the edge and retries it on the next loop tick.
+      fm_warning_prev = warning_now;
     }
-    fm_geometry_warning_prev = geometry_warning_now;
   }
 
   // Arm-window auto-disarm: if user never applied throttle since arming, disarm after fm_arm_window_s

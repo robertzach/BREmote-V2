@@ -1,3 +1,6 @@
+// V2.5-Evo - 2026-08-28 - FM Warning Distance is live at 50-164m. The field already occupied the
+// existing uint16_t ABI slot, so confStruct remains 136 bytes and SW_VERSION remains 27. Values
+// above the one-byte distance telemetry ceiling are clamped during load instead of wiping config.
 // V2.5-Evo - 2026-08-27 - Follow-Me validation extended 0-4 -> 0-6 for F4 Front-Left, F5 Front and F6 Front-Right. Range only; no confStruct/SW_VERSION change.
 // TX-specific config field table and cross-validation.
 // Shared engine is in ../Common/ConfigServiceEngine.h (included via BREmote_V2_Tx.h).
@@ -64,7 +67,7 @@ const CfgFieldSpec kCfgFields[] = {
   {"fm_hold_duration_s",     CFG_U16, offsetof(confStruct, fm_hold_duration_s),     true, false, true,  3.0f,  10.0f,    0, false},
   {"fm_override_enabled",    CFG_U16, offsetof(confStruct, fm_override_enabled),    true, false, true,  0.0f,   1.0f,    0, false},
   // V2.5-Evo - 2026-04-27 - FM UX parameters
-  {"fm_warn_distance_m",       CFG_U16, offsetof(confStruct, fm_warn_distance_m),       true, false, true, 50.0f, 1000.0f,   0, false},  // FM proximity warning threshold in meters
+  {"fm_warn_distance_m",       CFG_U16, offsetof(confStruct, fm_warn_distance_m),       true, false, true, 50.0f, (float)kFmDistanceTelemetryMaxM, 0, false},
   // V2.5-Evo - 2026-04-27 - Priority 8.1 FM UX redesign parameter
   {"fm_arm_window_s",          CFG_U16, offsetof(confStruct, fm_arm_window_s),          true, false, true, 10.0f, 600.0f,    0, false},  // FM auto-disarm after N seconds of no throttle input
   // V2.5-Evo - 2026-04-28 - P9: Distance unit selector. 0=Metres, 1=Feet.
@@ -86,6 +89,13 @@ const size_t kCfgFieldCount = sizeof(kCfgFields) / sizeof(kCfgFields[0]);
 
 bool cfgValidateCrossField(confStruct &candidate, String &err)
 {
+  // Older builds accepted up to 1000m even though the unchanged telemetry byte saturates at 164m.
+  // Clamp before table validation so such a stored/backup config remains loadable without a reset.
+  if (candidate.fm_warn_distance_m > kFmDistanceTelemetryMaxM)
+  {
+    candidate.fm_warn_distance_m = kFmDistanceTelemetryMaxM;
+  }
+
   if (candidate.max_gears < 1 || candidate.max_gears > 10)
   {
     err = "ERR_RANGE:max_gears";

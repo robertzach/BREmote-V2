@@ -81,6 +81,7 @@
 */
 #include <Arduino.h>
 #include <atomic>
+#include "../Common/FollowMeDistanceWarning.h"
 #include "../Common/FollowMeModes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -317,7 +318,7 @@ struct confStruct {
     // First flash of P8 firmware resets all TX settings to defaults.
     // ============================================================
     uint16_t rtm_display_mode;         // retired ABI slot
-    uint16_t fm_warn_distance_m;       // TX-RX distance to trigger FM proximity warning vibration; 50-1000m; default 150
+    uint16_t fm_warn_distance_m;       // TX-RX separation that starts a 2s-period FM warning; 50-164m; default 150
     uint16_t rtm_steer_exit_on_input;  // retired ABI slot
 
     // ============================================================
@@ -476,7 +477,7 @@ confStruct defaultConf = {  // V2.5-Evo — factory default configuration
   1,    // fm_override_enabled
   // V2.5-Evo - 2026-04-27 - Priority 8 UX overhaul defaults
   0,    // rtm_display_mode (0=distance; set 1 for speed, 2 for alternating)
-  150,  // fm_warn_distance_m (150m FM proximity warning threshold)
+  150,  // fm_warn_distance_m (150m FM separation warning threshold; telemetry maximum 164m)
   1,    // rtm_steer_exit_on_input (1=steering exits RTM; 0=blend only)
   // V2.5-Evo - 2026-04-27 - Priority 8.1 FM UX redesign defaults
   // V2.5-Evo - 2026-07-20 - SW27: fm_arm_window_s baked at 180 s (3 minutes).

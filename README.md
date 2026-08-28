@@ -602,7 +602,11 @@ area before a full-power run.
 
 ### FM Proximity Warning
 
-If TX-to-RX distance drops below `fm_warn_distance_m` (default 150 m), TX fires a 2×Pattern-2 vibration burst warning (2 short × 2, with 300 ms gap).
+When fresh TX-to-RX distance reaches or exceeds `fm_warn_distance_m` (default 150 m), TX gives one
+medium 300 ms vibration immediately and repeats it every 2 seconds while FM remains armed. The
+warning also runs with the trigger released. It stops below the threshold, on FM disarm or when the
+RX link becomes stale. The valid range is 50–164 m; 164 m is the maximum represented by the existing
+one-byte distance telemetry.
 
 ### FM Engage Distance — measure your rope first (RX)
 
@@ -649,7 +653,7 @@ with `?set fm_diverge_dist_m 60`, then `?save`; inspect it with `?get fm_diverge
 |---|---|---|
 | `fm_override_enabled` | 1 | Master on/off switch |
 | `fm_hold_duration_s` | 3 | RIGHT-hold duration to cycle FM mode, in seconds (3–10) |
-| `fm_warn_distance_m` | 150 | Proximity warning threshold in metres |
+| `fm_warn_distance_m` | 150 | Separation warning threshold in metres (50–164); one medium pulse immediately and every 2 s at/above it |
 
 </details>
 
@@ -1196,7 +1200,7 @@ Compiled clean: TX 39% / RX 40% flash (huge_app). SW_VERSION unchanged: TX=26, R
 - **Stop display:** RTM exit now shows `St` in large-font (`displayDigits(LET_S, LET_T)`) for 2 s. Arm confirm is unlock animation + `rn` blink. Compact-font full-screen messages for stop and arm were introduced then replaced by large-font `St` in the same P9 cycle (Bug4/Chg5 in RTMState.ino).
 - **`FM 0`–`FM 3` and `E 7`** still use compact 3×7 full-screen font. (Error code E71 — display renders as `E 7` due to screen width.)
 - **Old scrolling `Stp`** (scroll3Digits LET_S LET_T LET_P) removed.
-- **FM proximity warning vibration:** TX fires 2×Pattern-2 burst when TX-RX distance drops below `fm_warn_distance_m` (default 150 m).
+- **FM separation warning vibration:** current firmware gives one medium 300 ms pulse immediately and every 2 s while fresh TX-RX distance is at/above `fm_warn_distance_m` (default 150 m).
 - **`dist_unit` new TX SPIFFS field.** No sizeof change.
 
 ### V2.5.09 — April 2026 *(monterman)* — Stability, GPS Hz, Approach Zone

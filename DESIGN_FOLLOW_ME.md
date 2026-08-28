@@ -76,7 +76,8 @@ Any live state ──disarm / declaration expiry / config disable──→ FM_ID
   is held is different: it pauses automatic authority at cap 0. Trustworthy distance recovery above
   `min_dist_m` clears only that stop, retains the separation proof and resumes through the normal
   engage ramp. If the rider remains below 2 km/h for 2 seconds at any trustworthy distance,
-  `FM_ACTIVE` enters `FM_RETURN`. Warnings repeat every 3 seconds even with no trigger.
+  `FM_ACTIVE` enters `FM_RETURN`. RX geometry warnings repeat every 3 seconds even with no trigger;
+  the TX `fm_warn_distance_m` separation warning repeats every 2 seconds at/above its threshold.
 - **FM_RETURN:** entered from `FM_ACTIVE` after the filtered rider speed stays below 2 km/h for 2 s, regardless of distance. A stationary `FM_ARMED` declaration can enter only while radially beyond effective `D_engage`. Entry clears the separation and min-distance latches. During the proof, a held trigger is capped at zero; with the trigger released, zero input already stops the buggy. Outside `D_engage`, RETURN then aims directly at the rider using the FM heading controller, align cap, return speed governor, approach band and convergence check. At or inside `D_engage`, arrival completes immediately without return motion. Trigger release pauses a running retrieval without leaving `FM_RETURN`. Arrival at `dist <= D_engage`, or rider speed above 3 km/h for 1 s, exits only to `FM_ARMED`: the F1–F6 declaration remains live, but automatic Follow-Me needs a fresh 2-second radial proof above `D_engage`. There is no normal shortcut to `FM_ACTIVE` and no arrival-driven transition to `FM_IDLE`. If the trigger is held at the exit edge, cap 0 remains until one release; otherwise manual cap 255 is restored immediately.
 - **FM_STOPPING:** a sensor/link/heading or divergence fault ends the run, ramps the cap back to manual and requires a fresh TX declaration.
 
@@ -175,6 +176,7 @@ compatibility value reconstructs the old `6 × D_engage` limit and then applies 
 | `zone_angle_enter_deg` / `zone_angle_exit_deg` | F1/F3 side-target Schmitt; F4–F6 selected-axis warning Schmitt only | 35° / 45° |
 | `fm_engage_dist_m` | one radial F1–F6 activation and FM_RETURN arrival radius; 0 = auto, otherwise 8–50 m | 0 (auto) |
 | `fm_diverge_dist_m` | absolute FM_ACTIVE sustained non-closing ceiling; effective minimum `2 × D_engage`, maximum 100 m; 0 = legacy auto | 100 m |
+| `fm_warn_distance_m` (TX) | fresh TX-RX separation warning; medium pulse immediately and every 2 s at/above threshold; range 50–164 m | 150 m |
 | `rtm_target_speed_kmh` | historical key: literal 0-50 km/h FM Return PI target; 0 means zero speed; non-zero Boogie V-Max may clamp it | 4 km/h |
 | `rtm_align_threshold_deg` | historical key: FM Return align threshold | 45° |
 | `rtm_approach_zone_m` | historical key: FM Return slowdown-band width outside `D_engage`; minimum effective width 2 m | 12 m |

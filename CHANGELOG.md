@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-28 — FM Warning Distance is live
+
+The existing TX `fm_warn_distance_m` slot now drives a real Follow-Me separation warning. Once TX
+and RX both report FM armed, the link is fresh and the RX distance reaches or exceeds the configured
+threshold, the remote gives one medium 300 ms pulse immediately and repeats it every 2 seconds. The
+warning is independent of trigger posture and stops when distance falls below the threshold, FM is
+disarmed or the link becomes stale. It shares the existing informational Pattern 8 scheduler with
+geometry warnings, preventing two overlapping warning streams.
+
+The truthful range is 50–164 m because the existing one-byte RX-to-TX distance telemetry saturates
+at 164 m. Older stored/backup values above 164 m are clamped before validation instead of causing a
+config reset. The field already occupied the same `uint16_t` slot: TX `confStruct` remains 136 bytes,
+the packet layout is unchanged and TX `SW_VERSION` stays 27, so no settings wipe is required.
+
 ## 2026-08-28 — Uncapped catch-up and doubled F4–F6 front geometry
 
 The F1–F6 catch-up phase now opens speed cap 3 completely instead of targeting the configured
