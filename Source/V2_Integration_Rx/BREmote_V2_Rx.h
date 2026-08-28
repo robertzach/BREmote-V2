@@ -987,7 +987,7 @@ struct __attribute__((packed)) VescLogDataL4 {
     int16_t  fm_front_angle_dx10;  // F4-F6 selected-axis error x10 deg; 0x7FFF = not front/not measurable
     uint8_t  fm_mode;              // live RX declaration: 1..4; 0/0xFF = disabled/not declared
     uint8_t  fm_state;             // 0=IDLE, 1=ARMED, 2=ACTIVE, 4=STOPPING, 5=RETURN
-    uint8_t  fm_block_reason;      // FM_LOG_BLOCK_* below; formatter emits a stable text label
+    uint8_t  fm_block_reason;      // FM_LOG_BLOCK_*; a STOPPING row retains its initiating fault
     uint8_t  fm_throttle_cap;      // actual FM cap published to PWM, 0..255
 
     // Heading evidence audit block (2026-08-27). Appended after the original 83-byte FM audit
@@ -1074,7 +1074,10 @@ enum FmLogBlockReason : uint8_t {
   FM_LOG_BLOCK_MIN_DIST_STOP,
   FM_LOG_BLOCK_HEADING_DISAGREE,  // legacy CSV decoder only; current FM reports NO_HEADING + warning bit
   FM_LOG_BLOCK_DIVERGENCE,
-  FM_LOG_BLOCK_UNKNOWN
+  FM_LOG_BLOCK_UNKNOWN,
+  // Appended values preserve the numeric meaning of every reason already stored in Deep logs.
+  FM_LOG_BLOCK_RETURN_RUNTIME,
+  FM_LOG_BLOCK_RETURN_NOT_CLOSING
 };
 
 // Runtime copy passed from the loop-task FM controller to the logger task. This is deliberately
@@ -1217,6 +1220,8 @@ static inline const char* fmLogBlockReasonText(uint8_t reason)
     case FM_LOG_BLOCK_MIN_DIST_STOP:     return "min_dist_stop";
     case FM_LOG_BLOCK_HEADING_DISAGREE:  return "heading_disagree";
     case FM_LOG_BLOCK_DIVERGENCE:        return "divergence";
+    case FM_LOG_BLOCK_RETURN_RUNTIME:    return "return_runtime";
+    case FM_LOG_BLOCK_RETURN_NOT_CLOSING: return "return_not_closing";
     default:                             return "unknown";
   }
 }

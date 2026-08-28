@@ -1,3 +1,4 @@
+// V2.5-Evo - 2026-08-28 - FM_STOPPING now latches the concrete fault reason at the state edge and keeps publishing that reason in every Deep-log row for the full throttle-return ramp. The old code replaced it with the generic "stopping" label on the next 10 Hz tick, so a 3 Hz logger commonly never captured the actual GPS/Phase-B/heading/link/divergence cause. Normal Follow-Me and FM_RETURN use the same latch; RETURN safety gates now name their exact failing input, and its runtime/not-closing stops have stable reason codes. Log record size/layout, config and SW_VERSION are unchanged.
 // V2.5-Evo - 2026-08-28 - An FM_ACTIVE min-distance stop is now a recoverable cap-0 pause instead of a release-only latch. If trustworthy radial distance grows above min_dist_m, only the min-distance stop clears; the separation proof stays valid and Follow-Me resumes through the existing engage ramp and cap chain. If the rider instead remains below 2 km/h at/below min_dist_m for 2 s and releases the trigger, the lifecycle moves deliberately to FM_ARMED, clears both stop and separation latches, neutralises steering and exposes manual cap 255. No config/packet/struct change; SW_VERSION stays 35.
 // V2.5-Evo - 2026-08-28 - FM_RETURN now uses the same stateful PI speed governor as F1-F6 instead of the old stateless (1-speed/target) cap. rtm_target_speed_kmh is the literal 0-50 km/h RETURN setpoint (0 means cap 0); the old 5 km/h fallback and 8 km/h hard limit are removed, while a configured non-zero boogie V-Max remains the final absolute safety ceiling. PI state is cold-started on RETURN entry, pause and exit, and approach/align/engage caps feed the existing anti-windup path. Steering D continuity now includes a target-geometry profile as well as the heading source, so course-valid/degraded, diagonal, front-station and direct-return target changes cannot create a derivative kick. Config layout and SW_VERSION stay unchanged.
 // V2.5-Evo - 2026-08-28 - FM catch-up now uses the configured boogie V-Max in every F1-F6 mode until the corresponding distance-control band is reached. F1-F3 use the radial min_dist+smoothing-band edge; F4-F6 use the signed positive along-track error and require valid front geometry, so a buggy already too far ahead is never accelerated away. A 2 m Schmitt margin prevents GPS noise from repeatedly reopening catch-up. With boogie_vmax_in_followme_kmh=0 only the catch-up-phase speed cap is opened to 255 (maximum rider-requested throttle); normal in-band rider-relative PI regulation remains active. Align, engage, approach, hard-stop, divergence and trigger-deadman caps are unchanged. No config/packet/struct change; SW_VERSION stays 35.
@@ -1576,6 +1577,12 @@ static bool          fm_return_exit_hold           = false;
 // millis() when FM entered FM_STOPPING; drives the 0 -> 255 fault ramp. 0 = not stopping.
 static unsigned long fm_stop_ms          = 0;
 
+// Concrete reason captured on the same edge. runFmLoop() rebuilds fm_diag_block_reason on every
+// 10 Hz tick, so without this latch the next STOPPING tick retains only the lifecycle state and
+// loses the input that caused it. FM_LOG_BLOCK_STOPPING is a defensive/legacy fallback; every real
+// entry site below replaces it before publishing FM_STOPPING.
+static uint8_t       fm_stop_block_reason = FM_LOG_BLOCK_STOPPING;
+
 // millis() of the last SURPRISING fault stop (a fault that occurred while the trigger was held).
 // Drives the sticky fm_flags bit 3 for kFmFaultStickyMs so the TX cannot miss the stop
 // notification across the ~2.4 s telemetry rotation. 0 = no recent surprising fault. Deliberately
@@ -2882,7 +2889,8 @@ static void fmEnterIdle()
   // V2.5-Evo - 2026-07-20 - A3: clear the fault-ramp clock.
   // fm_fault_alarm_ms is deliberately NOT reset here: the surprise-gated stop notification must
   // stay sticky for kFmFaultStickyMs even after FM has dropped into FM_IDLE.
-  fm_stop_ms = 0;
+  fm_stop_ms           = 0;
+  fm_stop_block_reason = FM_LOG_BLOCK_STOPPING;
 
   // V2.5-Evo - 2026-07-25 - A3: leaving FM drops any part-accumulated divergence proof with it, so
   // the next engagement starts its 3 s window from scratch rather than inheriting a stale timer.
@@ -2984,13 +2992,35 @@ static bool fmReturnPositionOk(unsigned long now)
 // and the align cap limits throttle to ~5% until a trustworthy GPS course appears.
 static bool fmReturnFaultOk(unsigned long now)
 {
-  if (!fmReturnPositionOk(now)) return false;
-  if ((now - last_packet) > usrConf.failsafe_time) return false;
+  if (gps_rejected) {
+    fm_diag_block_reason = FM_LOG_BLOCK_GPS_REJECTED;
+    return false;
+  }
+  if (!gps_phase_b_ok) {
+    fm_diag_block_reason = FM_LOG_BLOCK_PHASE_B;
+    return false;
+  }
+  if (rx_tx_gps_timestamp == 0 ||
+      (now - rx_tx_gps_timestamp) > (uint32_t)usrConf.tx_gps_stale_timeout_ms) {
+    fm_diag_block_reason = FM_LOG_BLOCK_TX_GPS_STALE;
+    return false;
+  }
+  if (gps_last_ms == 0 || (now - gps_last_ms) > 6000UL) {
+    fm_diag_block_reason = FM_LOG_BLOCK_RX_GPS_STALE;
+    return false;
+  }
+  if ((now - last_packet) > usrConf.failsafe_time) {
+    fm_diag_block_reason = FM_LOG_BLOCK_LINK;
+    return false;
+  }
 
   if (usrConf.rtm_compass_required && !headingDisagreeLatched()) {
     float h_unused;
     uint8_t conf_unused;
-    if (!getRtmHeading(&h_unused, &conf_unused)) return false;
+    if (!getRtmHeading(&h_unused, &conf_unused)) {
+      fm_diag_block_reason = FM_LOG_BLOCK_NO_HEADING;
+      return false;
+    }
   }
   return true;
 }
@@ -3049,7 +3079,8 @@ static uint8_t fmComputeReturnThrottleCap(float dist_m, float d_engage, unsigned
   return (uint8_t)cap;
 }
 
-static void fmReturnFaultStop(unsigned long now, const char *reason, bool thr_held)
+static void fmReturnFaultStop(unsigned long now, FmLogBlockReason block_reason,
+                              const char *reason, bool thr_held)
 {
   fm_rx_active       = false;
   rtm_steer_override = 127;
@@ -3062,8 +3093,10 @@ static void fmReturnFaultStop(unsigned long now, const char *reason, bool thr_he
   // Otherwise the TX keeps sending its old 0xF2 declaration and can silently re-arm the RX after
   // STOPPING. The fault flag is therefore also the declaration-ownership acknowledgement here.
   fm_fault_alarm_ms = now;
-  fm_stop_ms = now;
-  fm_state   = FM_STOPPING;
+  fm_stop_ms           = now;
+  fm_stop_block_reason = (uint8_t)block_reason;
+  fm_diag_block_reason = fm_stop_block_reason;
+  fm_state             = FM_STOPPING;
   fmResetSpeedGovernor();
   Serial.printf("FM [RX] RETURN FAULT -> STOPPING: %s (thr_held=%d)\n", reason, (int)thr_held);
 }
@@ -3257,7 +3290,9 @@ void runFmLoop()
   // rider's held trigger stays the sole throttle source, and starting the ramp from 0 means no
   // lurch. (RTM preemption / GPS-off / mode-off above still abort straight to IDLE.)
   if (fm_state == FM_STOPPING) {
-    fm_diag_block_reason = FM_LOG_BLOCK_STOPPING;
+    // State and cause are separate facts: fm_state already says STOPPING, while the reason column
+    // keeps the input latched at the transition so every logger sample in the ramp explains why.
+    fm_diag_block_reason = fm_stop_block_reason;
     fm_rx_active       = false;
     rtm_steer_override = 127;
     fm_geometry_warning = false;
@@ -3298,6 +3333,10 @@ void runFmLoop()
       (manual_steer_dev >= (int)kFmManualSteerDeadband);
   fm_diag_manual_steer = manual_steer_requested;
   bool  fault_ok = checkFmFaultConditions();   // conditions 2-7 (FAULT)
+  // Preserve checkFmFaultConditions()' exact first failure before the primary display reason below
+  // can legitimately become "trigger" on a released-deadman tick. A fault detected after release
+  // must still carry its sensor/link cause into STOPPING even though it is not surprise-haptic.
+  uint8_t fault_block_reason = fault_ok ? FM_LOG_BLOCK_NONE : fm_diag_block_reason;
   bool  hard_ok  = thr_held && fault_ok;       // gates automatic control and separation proof
   bool  was_controlling = fm_rx_active.load(std::memory_order_relaxed);
   bool  active_session  = (fm_state == FM_ACTIVE);
@@ -3428,11 +3467,12 @@ void runFmLoop()
     }
 
     if (!fmReturnFaultOk(now)) {
-      fmReturnFaultStop(now, "GPS/link/heading gate failed", thr_held);
+      fmReturnFaultStop(now, (FmLogBlockReason)fm_diag_block_reason,
+                        "GPS/link/heading gate failed", thr_held);
       return;
     }
     if ((now - fm_return_start_ms) >= kFmReturnMaxRuntimeMs) {
-      fmReturnFaultStop(now, "60 s runtime limit", thr_held);
+      fmReturnFaultStop(now, FM_LOG_BLOCK_RETURN_RUNTIME, "60 s runtime limit", thr_held);
       return;
     }
 
@@ -3467,7 +3507,8 @@ void runFmLoop()
       fm_return_prev_dist_m = dist_m;
     } else if ((now - fm_return_check_ms) >= kFmReturnCheckMs) {
       if (dist_m >= (fm_return_prev_dist_m - kFmReturnCloseEpsM)) {
-        fmReturnFaultStop(now, "distance did not close over 5 s", thr_held);
+        fmReturnFaultStop(now, FM_LOG_BLOCK_RETURN_NOT_CLOSING,
+                          "distance did not close over 5 s", thr_held);
         return;
       }
       fm_return_check_ms    = now;
@@ -3817,8 +3858,10 @@ void runFmLoop()
       // parked while the rider deliberately holds manual steering, so this classifier judges FM's
       // own convergence only after automatic steering has resumed.
       if (thr_held) fm_fault_alarm_ms = now;
-      fm_stop_ms      = now;
-      fm_state        = FM_STOPPING;
+      fm_stop_ms           = now;
+      fm_stop_block_reason = diverge_fault ? FM_LOG_BLOCK_DIVERGENCE : fault_block_reason;
+      fm_diag_block_reason = fm_stop_block_reason;
+      fm_state             = FM_STOPPING;
       fm_min_dist_stop_latched = false;
       fm_min_dist_stationary_since_ms = 0;
       fm_throttle_cap = 0;         // subtract-only hard stop; the ramp begins next tick

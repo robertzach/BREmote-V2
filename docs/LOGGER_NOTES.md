@@ -58,6 +58,9 @@ file. The appended `fm_block_reason` column gives the primary reason directly; t
 columns preserve the complete decision for cross-checking. The heading-evidence columns then show
 whether COG was captured, fresh, fast enough, frozen, live or held; whether the compass snapshot
 was comparable; the signed source difference; and the disagreement set/clear dwell progress.
+When `fm_state` is `STOPPING`, `fm_block_reason` remains the concrete fault that initiated the stop
+for the entire throttle-return ramp (for example `phase_b`, `no_heading`, `link`, `divergence`,
+`return_runtime` or `return_not_closing`); it is not replaced by a generic lifecycle label.
 
 - **Resilience:** each session is its own file, and `ensureFreeSpace()` rolls off the **oldest** log
   when SPIFFS fills while protecting the active file — so a full session always fits; only old
