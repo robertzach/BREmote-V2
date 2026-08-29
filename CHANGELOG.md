@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-29 — FM link loss preserves the lifecycle
+
+A LoRa timeout no longer converts Follow-Me into `FM_STOPPING`. At the same strict
+`failsafe_time` boundary where the PWM task stops motor pulses, the FM loop now removes automatic
+authority, centres steering, holds cap 0 and resets unfinished separation/RETURN/divergence proof.
+`FM_ARMED`, `FM_ACTIVE`, `FM_RETURN` and completed latches remain unchanged. When the link returns,
+the hold waits up to 6 seconds for one new TX GPS sample before sensor evaluation, preventing the
+first control packet from relabelling the outage's stale GPS timestamp as a fault. ACTIVE and RETURN
+then resume through their existing gentle ramp and fresh convergence window instead of demanding a
+re-arm. A sensor that remains bad beyond that bounded wait retains STOPPING behavior. The separate
+95-second declaration expiry remains as protection against a lost F0/disarm burst. No config,
+packet, struct or SW-version change.
+
 ## 2026-08-28 — Differential mixing is throttle-relative and power-neutral
 
 Differential steering no longer adds an offset derived from the full PWM span at every throttle.

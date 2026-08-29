@@ -6,6 +6,30 @@ int main()
 {
   const float engageDistanceM = 12.0f;
 
+  // Link loss is detected at exactly the same boundary as PWM.ino's pulse-output failsafe.
+  assert(followMeLinkHealthy(1000, 3999, 3000));
+  assert(!followMeLinkHealthy(1000, 4000, 3000));
+  assert(!followMeLinkHealthy(0, 100, 3000));
+  assert(followMeLinkHealthy(0xFFFFFF00u, 0x00000010u, 3000));
+
+  // A control-packet recovery still waits for one post-outage TX GPS sample.
+  assert(!followMeTxGpsRefreshedAfterLinkHold(2500, 2500));
+  assert(!followMeTxGpsRefreshedAfterLinkHold(2500, 0));
+  assert(followMeTxGpsRefreshedAfterLinkHold(2500, 4100));
+  assert(followMeLinkRecoveryShouldHold(false, 4000, 9999, 6000));
+  assert(!followMeLinkRecoveryShouldHold(false, 4000, 10000, 6000));
+  assert(!followMeLinkRecoveryShouldHold(true, 4000, 4001, 6000));
+  assert(followMeLinkRecoveryShouldHold(false, 0xFFFFFF00u, 0x00000010u, 6000));
+
+  // Timeout removes outputs but preserves every live lifecycle state exactly.
+  const uint8_t linkHeldStates[] = { 1, 2, 5 }; // ARMED, ACTIVE, RETURN
+  for (uint8_t state : linkHeldStates) {
+    FollowMeLinkHoldPolicy hold = followMeLinkHold(state);
+    assert(hold.lifecycle_state == state);
+    assert(!hold.automatic_authority);
+    assert(hold.throttle_cap == 0);
+  }
+
   // Separation is a sensor/geometry proof. There is intentionally no trigger input to this API.
   assert(followMeSeparationSample(
       true, true, false, 12.1f, engageDistanceM));
@@ -30,10 +54,12 @@ int main()
   assert(!followMeLifecycleReady(true, false, true, true, false));
   assert(!followMeLifecycleReady(true, false, true, false, true));
 
-  // Actual automatic motor/steering authority remains a physical-deadman decision.
-  assert(!followMeAutomaticAuthority(true, false));
-  assert(followMeAutomaticAuthority(true, true));
-  assert(!followMeAutomaticAuthority(false, true));
+  // Actual automatic motor/steering authority needs both the physical deadman and a live link.
+  assert(!followMeAutomaticAuthority(true, false, true));
+  assert(followMeAutomaticAuthority(true, true, true));
+  assert(!followMeAutomaticAuthority(false, true, true));
+  assert(!followMeAutomaticAuthority(true, true, false));
+  assert(followMeAutomaticAuthority(true, true, true)); // recovery may re-enter via the ramp
 
   // With authority withheld, readiness still causes the requested FM_ARMED -> FM_ACTIVE edge.
   assert(followMeActiveLifecycle(false, true));

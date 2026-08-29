@@ -409,7 +409,8 @@ chop, one-handed, with a foil under you. Learn them dry first.
 > |---|---|---|
 > | **Warning** | radial/front geometry outside its diagnostic limits | Medium pulse every 3 s; control unchanged |
 > | **Min stop** | ACTIVE distance reaches `min_dist_m` | Cap 0; moving recovery above it resumes with proof retained; stationary 2 s completes through `FM_RETURN` and requires a fresh proof |
-> | **FAULT** | GPS / compass / radio dropout | **Stops**, shows `St` + long buzz, **you must re-arm** |
+> | **FAULT** | GPS / heading dropout with a healthy radio | **Stops**, shows `St` + long buzz, **you must re-arm** |
+> | **LINK HOLD** | Radio timeout | PWM stops; FM state stays; ramped resume when the link returns (95 s declaration expiry remains) |
 >
 > **When does the GPS dot go solid?** Not on satellite count — on **fix quality**. The TX requires a
 > valid position *and* valid speed, fresher than `tx_gps_stale_timeout_ms`, *and* **HDOP at or below
@@ -432,7 +433,7 @@ Confirm the gestures and display before you're in the water:
   > logging — the AUX LED blinks 5× — and short-press again to stop (2 blinks).** You get logging per
   > session, on demand. Setting `logger_en` to 1 only means it starts recording the moment it powers
   > up, whether you are moving or not.
-- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 uncapped catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/compass/radio dropout is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**.
+- **Pauses vs Stops:** ordinary trigger release keeps `FM_ACTIVE` and stops the motor without rewriting its cap. Geometry/front loss does not stop FM and repeats a warning every 3 seconds, even with the trigger released; invalid signed front geometry withdraws only F4–F6 uncapped catch-up and falls back to the normal rider-relative speed target. Reaching `min_dist_m` forces cap 0. If distance recovers, FM keeps its separation proof and resumes through the engage ramp. If the rider remains below 2 km/h at/below the boundary for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears both latches, so automatic FM needs a fresh `>D_engage` proof. A GPS/heading dropout while the radio is healthy is a **FAULT** — it **stops** (`St` + long buzz), throttle returns, and you must **re-arm**. A radio timeout instead holds FM state and lets the existing PWM failsafe stop the motor; link recovery resumes through the engage ramp. The separate 95 s declaration expiry remains the lost-disarm backstop.
 - **Manual steering takeover:** while FM is following, deliberate steering temporarily wins without cancelling FM. The FM throttle cap remains active; centre the input to return steering to FM.
 
 ---

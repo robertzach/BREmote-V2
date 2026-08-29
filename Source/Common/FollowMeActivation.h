@@ -3,9 +3,55 @@
 
 #include <stdint.h>
 
+// The radio failsafe is an authority hold, not an FM lifecycle transition. Match PWM.ino's strict
+// boundary exactly: at age == failsafe_ms the PWM task has already stopped emitting motor pulses.
+// Requiring a non-zero timestamp also keeps startup fail-closed before the first valid packet.
+static inline bool followMeLinkHealthy(
+    uint32_t last_packet_ms,
+    uint32_t now_ms,
+    uint32_t failsafe_ms)
+{
+  return last_packet_ms != 0 &&
+      (uint32_t)(now_ms - last_packet_ms) < failsafe_ms;
+}
+
+// A recovered control packet must not expose a stale pre-outage TX position. Wait for one newly
+// decoded GPS meta-packet before leaving the link hold; the caller bounds this wait separately.
+static inline bool followMeTxGpsRefreshedAfterLinkHold(
+    uint32_t tx_gps_ms_at_hold,
+    uint32_t current_tx_gps_ms)
+{
+  return current_tx_gps_ms != 0 && current_tx_gps_ms != tx_gps_ms_at_hold;
+}
+
+static inline bool followMeLinkRecoveryShouldHold(
+    bool tx_gps_refreshed,
+    uint32_t recovery_start_ms,
+    uint32_t now_ms,
+    uint32_t grace_ms)
+{
+  return !tx_gps_refreshed &&
+      (uint32_t)(now_ms - recovery_start_ms) < grace_ms;
+}
+
+struct FollowMeLinkHoldPolicy {
+  uint8_t lifecycle_state;
+  bool automatic_authority;
+  uint8_t throttle_cap;
+};
+
+// A link timeout changes outputs, never the lifecycle. Keeping this tiny policy in the native-test
+// surface makes ARMED/ACTIVE/RETURN preservation an explicit contract rather than a side effect of
+// a branch that happens not to assign the state.
+static inline FollowMeLinkHoldPolicy followMeLinkHold(uint8_t current_state)
+{
+  FollowMeLinkHoldPolicy policy = { current_state, false, 0 };
+  return policy;
+}
+
 // The separation proof and the FM lifecycle are deliberately independent of the physical trigger.
-// The trigger is applied only at the final automatic-authority gate, so opening it always removes
-// motor/steering authority without preventing FM_ARMED -> FM_ACTIVE.
+// The trigger and live link are applied only at the final automatic-authority gate, so opening the
+// trigger always removes motor/steering authority without preventing FM_ARMED -> FM_ACTIVE.
 static inline bool followMeSeparationSample(
     bool fault_ok,
     bool position_ok,
@@ -39,9 +85,10 @@ static inline bool followMeLifecycleReady(
 
 static inline bool followMeAutomaticAuthority(
     bool lifecycle_ready,
-    bool trigger_held)
+    bool trigger_held,
+    bool link_ok)
 {
-  return lifecycle_ready && trigger_held;
+  return lifecycle_ready && trigger_held && link_ok;
 }
 
 static inline bool followMeActiveLifecycle(

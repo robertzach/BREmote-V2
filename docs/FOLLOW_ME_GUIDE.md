@@ -178,12 +178,16 @@ Not every interruption is the same. Follow-Me tells them apart:
 | **`min_dist_m` is reached** | recoverable stop | cap 0; moving recovery above the boundary retains separation and resumes through the engage ramp; 2 s stationary uses the common RETURN cleanup | only stationary completion needs a new `>D_engage` proof |
 | **F1–F3 warning geometry is invalid** | information | control continues unchanged; one medium warning every 3 s | **no** |
 | **F4–F6 front position is lost** | information | control/proof continue unchanged; one medium warning every 3 s | **no** |
-| **GPS heading/position or radio drops out** | a **FAULT** (something broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
+| **GPS heading/position drops out while the link is healthy** | a **FAULT** (sensor evidence broke) | **stops** → shows `St`, throttle returns, must **re-arm** | **yes** |
+| **Radio link times out** | authority hold | PWM stops immediately; FM state/proven latches stay, steering centres, waits for a new TX GPS sample (max. 6 s), then uses the engage ramp | **no** (unless a sensor stays bad or the separate 95 s declaration expiry is reached) |
 | **Compass disagrees with valid GPS COG** | GPS-only degradation | compass is excluded; FM may engage/continue on live or briefly held COG | **no** |
 
 The 3-second geometry warning continues even when the trigger is released and never changes the
-control path. A real sensor/link failure is different: FM steps fully out and waits for a deliberate
-re-arm, so autonomy never silently restarts after a fault.
+control path. A real sensor failure while the radio is healthy steps FM fully out and waits for a
+deliberate re-arm. A radio timeout is held separately because the PWM failsafe already forces the
+motor off; incomplete distance/RETURN/divergence proofs are discarded, but the FM lifecycle and
+completed latches remain. If no FM declaration refresh arrives for 95 seconds, the independent
+lost-disarm backstop still expires the mode to `FM_IDLE`.
 
 ### FM_RETURN — return after you stop
 

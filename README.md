@@ -584,7 +584,11 @@ throttle is already zero. Geometry/front loss produces one medium vibration imme
 proof and resumes through the normal engage ramp. If the rider instead remains below 2 km/h at/below
 `min_dist_m` for 2 seconds, releasing the trigger enters `FM_ARMED`, restores manual cap 255 and clears
 both latches; automatic FM then needs another radial `>D_engage` 2-second proof.
-Explicit F0/disarm remains the deterministic boundary; genuine sensor/link faults still end the run.
+Explicit F0/disarm remains the deterministic boundary. Genuine sensor faults still end the run.
+A radio timeout instead pauses automatic authority without changing `FM_ARMED`, `FM_ACTIVE` or
+`FM_RETURN`: the PWM failsafe stops motor pulses, steering is centred, and recovery uses the normal
+engage ramp after one fresh TX GPS sample arrives (bounded to a 6-second wait). A declaration not
+refreshed for 95 seconds still expires to protect against a lost F0.
 
 ### Throttle-dependent steering (RX)
 
